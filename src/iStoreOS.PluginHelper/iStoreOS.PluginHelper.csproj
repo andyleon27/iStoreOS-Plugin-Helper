@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+    <ProjectGuid>{10E72BE9-EC40-4471-A2ED-8BDF2A112B52}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>iStoreOS.PluginHelper</RootNamespace>
+    <AssemblyName>iStoreOS.PluginHelper</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Resources\Icons\app-logo.ico</ApplicationIcon>
+    <OutputPath>bin\$(Platform)\$(Configuration)\</OutputPath>
+    <DebugType>pdbonly</DebugType>
+    <Optimize Condition="'$(Configuration)' == 'Release'">true</Optimize>
+    <DefineConstants Condition="'$(Configuration)' == 'Debug'">DEBUG;TRACE</DefineConstants>
+    <DefineConstants Condition="'$(Configuration)' == 'Release'">TRACE</DefineConstants>
+    <ProjectTypeGuids>{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
+  </PropertyGroup>
+  <Import Project="..\..\build\Common.props" />
+  <ItemGroup>
+    <Compile Include="Models\*.cs" />
+    <Compile Include="Services\*.cs" />
+    <Compile Include="Utilities\*.cs" />
+    <Compile Include="Controls\*.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="MainForm.cs"><SubType>Form</SubType></Compile>
+    <Compile Include="MainForm.Designer.cs"><DependentUpon>MainForm.cs</DependentUpon></Compile>
+    <Compile Include="MainForm.Software.cs"><DependentUpon>MainForm.cs</DependentUpon></Compile>
+    <Compile Include="MainForm.Installation.cs"><DependentUpon>MainForm.cs</DependentUpon></Compile>
+    <Compile Include="MainForm.Layout.cs"><DependentUpon>MainForm.cs</DependentUpon></Compile>
+    <Compile Include="MainForm.Logs.cs"><DependentUpon>MainForm.cs</DependentUpon></Compile>
+    <Compile Include="MainForm.AdvancedInfo.cs"><DependentUpon>MainForm.cs</DependentUpon></Compile>
+    <Compile Include="AdvancedInfoForm.cs"><SubType>Form</SubType></Compile>
+    <Compile Include="InstallConfirmationForm.cs"><SubType>Form</SubType></Compile>
+    <Compile Include="SoftwareRepairConfirmationForm.cs"><SubType>Form</SubType></Compile>
+    <None Include="App.config" />
+    <None Include="app.manifest" />
+    <None Include="packages.config" />
+    <EmbeddedResource Include="Resources\Icons\*.png"><LogicalName>iStoreOS.PluginHelper.Resources.Icons.%(Filename)%(Extension)</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="Resources\Icons\app-logo.ico"><LogicalName>iStoreOS.PluginHelper.Resources.Icons.app-logo.ico</LogicalName></EmbeddedResource>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

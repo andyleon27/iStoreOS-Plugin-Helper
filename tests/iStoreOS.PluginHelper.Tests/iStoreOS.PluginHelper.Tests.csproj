@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+    <ProjectGuid>{B5F8D35D-462C-4A08-9E06-2DD271618A67}</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>iStoreOS.PluginHelper.Tests</RootNamespace>
+    <AssemblyName>iStoreOS.PluginHelper.Tests</AssemblyName>
+    <OutputPath>bin\$(Platform)\$(Configuration)\</OutputPath>
+    <DebugType>pdbonly</DebugType>
+    <Optimize Condition="'$(Configuration)' == 'Release'">true</Optimize>
+  </PropertyGroup>
+  <Import Project="..\..\build\Common.props" />
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="SoftwareTests.cs" />
+    <Compile Include="InstallationTests.cs" />
+    <Compile Include="UiTests.cs" />
+    <Compile Include="WorkflowTests.cs" />
+    <Compile Include="CompactUiTests.cs" />
+    <Compile Include="RoundedUiTests.cs" />
+    <Compile Include="AdvancedUiTests.cs" />
+    <ProjectReference Include="..\..\src\iStoreOS.PluginHelper\iStoreOS.PluginHelper.csproj">
+      <Project>{10E72BE9-EC40-4471-A2ED-8BDF2A112B52}</Project><Name>iStoreOS.PluginHelper</Name>
+    </ProjectReference>
+    <None Include="..\..\src\iStoreOS.PluginHelper\App.config"><Link>App.config</Link></None>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

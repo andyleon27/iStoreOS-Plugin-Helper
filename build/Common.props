@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <TargetFrameworkIdentifier>.NETFramework</TargetFrameworkIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <WarningLevel>4</WarningLevel>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <PackagesDirectory>$(MSBuildThisFileDirectory)..\packages\</PackagesDirectory>
+    <TargetFrameworkRootPath Condition="Exists('$(PackagesDirectory)Microsoft.NETFramework.ReferenceAssemblies.net48.1.0.3\build\.NETFramework\v4.8')">$(PackagesDirectory)Microsoft.NETFramework.ReferenceAssemblies.net48.1.0.3\build\</TargetFrameworkRootPath>
+    <NoStdLib>true</NoStdLib>
+    <EnableFrameworkPathOverride>false</EnableFrameworkPathOverride>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="mscorlib" />
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="System.Xml" />
+    <Reference Include="Renci.SshNet"><HintPath>$(PackagesDirectory)SSH.NET.2026.0.0\lib\net462\Renci.SshNet.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="BouncyCastle.Cryptography"><HintPath>$(PackagesDirectory)BouncyCastle.Cryptography.2.7.0\lib\net461\BouncyCastle.Cryptography.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Bcl.AsyncInterfaces"><HintPath>$(PackagesDirectory)Microsoft.Bcl.AsyncInterfaces.8.0.0\lib\net462\Microsoft.Bcl.AsyncInterfaces.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Bcl.Cryptography"><HintPath>$(PackagesDirectory)Microsoft.Bcl.Cryptography.10.0.10\lib\net462\Microsoft.Bcl.Cryptography.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Extensions.DependencyInjection.Abstractions"><HintPath>$(PackagesDirectory)Microsoft.Extensions.DependencyInjection.Abstractions.8.0.2\lib\net462\Microsoft.Extensions.DependencyInjection.Abstractions.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.Extensions.Logging.Abstractions"><HintPath>$(PackagesDirectory)Microsoft.Extensions.Logging.Abstractions.8.0.3\lib\net462\Microsoft.Extensions.Logging.Abstractions.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Buffers"><HintPath>$(PackagesDirectory)System.Buffers.4.6.1\lib\net462\System.Buffers.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Formats.Asn1"><HintPath>$(PackagesDirectory)System.Formats.Asn1.10.0.10\lib\net462\System.Formats.Asn1.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Memory"><HintPath>$(PackagesDirectory)System.Memory.4.6.3\lib\net462\System.Memory.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Numerics.Vectors"><HintPath>$(PackagesDirectory)System.Numerics.Vectors.4.6.1\lib\net462\System.Numerics.Vectors.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Runtime.CompilerServices.Unsafe"><HintPath>$(PackagesDirectory)System.Runtime.CompilerServices.Unsafe.6.1.2\lib\net462\System.Runtime.CompilerServices.Unsafe.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.Threading.Tasks.Extensions"><HintPath>$(PackagesDirectory)System.Threading.Tasks.Extensions.4.5.4\lib\net461\System.Threading.Tasks.Extensions.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="System.ValueTuple, Version=4.0.5.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"><HintPath>$(PackagesDirectory)System.ValueTuple.4.6.2\lib\net47\System.ValueTuple.dll</HintPath><SpecificVersion>true</SpecificVersion><Private>true</Private></Reference>
+  </ItemGroup>
+</Project>

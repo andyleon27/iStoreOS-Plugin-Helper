@@ -1,0 +1,24 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "iStoreOS.PluginHelper", "src\iStoreOS.PluginHelper\iStoreOS.PluginHelper.csproj", "{10E72BE9-EC40-4471-A2ED-8BDF2A112B52}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "iStoreOS.PluginHelper.Tests", "tests\iStoreOS.PluginHelper.Tests\iStoreOS.PluginHelper.Tests.csproj", "{B5F8D35D-462C-4A08-9E06-2DD271618A67}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{10E72BE9-EC40-4471-A2ED-8BDF2A112B52}.Debug|x64.ActiveCfg = Debug|x64
+		{10E72BE9-EC40-4471-A2ED-8BDF2A112B52}.Debug|x64.Build.0 = Debug|x64
+		{10E72BE9-EC40-4471-A2ED-8BDF2A112B52}.Release|x64.ActiveCfg = Release|x64
+		{10E72BE9-EC40-4471-A2ED-8BDF2A112B52}.Release|x64.Build.0 = Release|x64
+		{B5F8D35D-462C-4A08-9E06-2DD271618A67}.Debug|x64.ActiveCfg = Debug|x64
+		{B5F8D35D-462C-4A08-9E06-2DD271618A67}.Debug|x64.Build.0 = Debug|x64
+		{B5F8D35D-462C-4A08-9E06-2DD271618A67}.Release|x64.ActiveCfg = Release|x64
+		{B5F8D35D-462C-4A08-9E06-2DD271618A67}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+EndGlobal
