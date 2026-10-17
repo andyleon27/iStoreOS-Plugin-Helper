@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 1.0.1
+
+发布日期：2026-10-17。
+
+- 修复插件 `aarch64` / `aarch64_a53` 与设备 `aarch64_cortex-a53` 的兼容性误判。
+- 集中实现有方向的架构语义规则：A53 / A72 别名、bare ARM64、严格 generic 与明确的 Are-u-ok A53 → generic 例外。
+- 禁止 A72 → A53、generic → Cortex 等缺少证据的放行，SDK 仍严格匹配。
+- 文件名解析增加 Cortex-A53 / A72 长 token，保留原始架构展示并记录兼容映射。
+- 增加完整架构矩阵、四个用户文件名和 A72 反例回归。安装核心、SSH、软件源、Retry 与 UI 结构保持。
+
+验证：原有 264 项测试全部保留，新增 122 项，共 386 passed / 0 failed；Release x64 为 0 warning / 0 error。N1（iStoreOS 24.10.8 / aarch64_cortex-a53 / OPKG）四个插件实机兼容性验收通过，A72 反例不兼容，未执行安装。正式 ZIP 直接复用已验收测试包。
+
 ## 1.0.0
 
 发布日期：2026-10-13。

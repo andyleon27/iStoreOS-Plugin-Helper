@@ -8,7 +8,7 @@ namespace iStoreOS.PluginHelper.Services
     public sealed class PluginPackageAnalyzer
     {
         private static readonly string[] Architectures =
-            { "aarch64_generic", "aarch64_a53", "aarch64_a72", "x86_64", "aarch64" };
+            { "aarch64_cortex-a53", "aarch64_cortex-a72", "aarch64_generic", "aarch64_a53", "aarch64_a72", "x86_64", "aarch64" };
         private static readonly string[] PluginNames =
             { "openwrt-daede", "OpenWrt-nikki", "OpenWrt-momo", "PassWall2", "PassWall", "homeproxy", "OpenClash", "daede", "SSR-Plus" };
 
@@ -56,10 +56,10 @@ namespace iStoreOS.PluginHelper.Services
             string nameAndVersion = prefix;
             foreach (string architecture in Architectures)
             {
-                if (prefix.EndsWith("_" + architecture, StringComparison.Ordinal) ||
-                    prefix.EndsWith("+" + architecture, StringComparison.Ordinal))
+                if (prefix.EndsWith("_" + architecture, StringComparison.OrdinalIgnoreCase) ||
+                    prefix.EndsWith("+" + architecture, StringComparison.OrdinalIgnoreCase))
                 {
-                    info.Architecture = architecture;
+                    info.Architecture = prefix.Substring(prefix.Length - architecture.Length);
                     nameAndVersion = prefix.Substring(0, prefix.Length - architecture.Length - 1);
                     break;
                 }

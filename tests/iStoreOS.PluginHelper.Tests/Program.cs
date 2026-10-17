@@ -180,6 +180,7 @@ namespace iStoreOS.PluginHelper.Tests
                 try { bool rejected = false; try { Analyzer.AnalyzeFile(path); } catch (ArgumentException) { rejected = true; } True(rejected); }
                 finally { File.Delete(path); }
             });
+            ArchitectureCompatibilityTests.Run(Run);
             SoftwareTests.Run(Run);
             InstallationTests.Run(Run);
             UiTests.Run(Run);
@@ -220,7 +221,7 @@ namespace iStoreOS.PluginHelper.Tests
             using (var form = new MainForm())
             {
                 form.Show(); Application.DoEvents();
-                Equal("iStoreOS 插件安装助手 V1.0", form.Text);
+                Equal("iStoreOS 插件安装助手 V1.0.1", form.Text);
                 True(((TextBox)UiTests.Control(form, "passwordBox")).PasswordChar != '\0');
                 True(((RichTextBox)UiTests.Control(form, "logBox")).ReadOnly);
                 True(UiTests.Control(form, "dropLabel").AllowDrop);

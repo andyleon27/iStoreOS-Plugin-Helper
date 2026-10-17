@@ -7,9 +7,10 @@ $buildDirectory = Join-Path $projectRoot 'src\iStoreOS.PluginHelper\bin\x64\Rele
 $executable = Join-Path $buildDirectory 'iStoreOS.PluginHelper.exe'
 if (-not (Test-Path -LiteralPath $executable)) { throw 'Build Release x64 first.' }
 $version = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($executable).ProductVersion
-if ($version -ne '1.0.0') { throw 'Unexpected product version; expected 1.0.0.' }
+if ($version -ne '1.0.1') { throw 'Unexpected product version; expected 1.0.1.' }
 $packageName = 'iStoreOS.PluginHelper-v' + $version + '-win-x64'
-$releaseDirectory = Join-Path $projectRoot ('artifacts\release\v' + $version)
+# Real-device compatibility acceptance is required before any public release.
+$releaseDirectory = Join-Path $projectRoot ('artifacts\release\v' + $version + '-test')
 $outputDirectory = Join-Path $projectRoot ('artifacts\package-work\' + $packageName + '-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $outputDirectory,$releaseDirectory -Force | Out-Null
 

@@ -16,12 +16,15 @@ namespace iStoreOS.PluginHelper.Services
                 string.IsNullOrWhiteSpace(router.SdkSeries) || string.IsNullOrWhiteSpace(router.Architecture))
             { plugin.CompatibilityMessage = "无法确定兼容性：插件或设备的 SDK / 架构未完整识别。"; return; }
             var reasons = new List<string>();
-            if (!string.Equals(plugin.Architecture, router.Architecture, StringComparison.Ordinal))
-                reasons.Add("插件架构 " + plugin.Architecture + " 与目标 " + router.Architecture + " 不匹配");
+            string architectureExplanation;
+            if (!ArchitectureCompatibilityService.IsCompatible(plugin.Architecture, router.Architecture, out architectureExplanation))
+                reasons.Add(architectureExplanation);
             if (!string.Equals(plugin.SdkSeries, router.SdkSeries, StringComparison.Ordinal))
                 reasons.Add("插件 SDK " + plugin.SdkSeries + " 与目标 " + router.SdkSeries + " 不匹配");
             plugin.CompatibilityStatus = reasons.Count == 0 ? CompatibilityStatus.Compatible : CompatibilityStatus.Incompatible;
             plugin.CompatibilityMessage = reasons.Count == 0 ? "✓ 与当前设备兼容（SDK / 架构匹配）" : "✗ " + string.Join("；", reasons);
+            if (reasons.Count == 0 && !string.Equals(plugin.Architecture, router.Architecture, StringComparison.OrdinalIgnoreCase))
+                plugin.CompatibilityMessage += "；" + architectureExplanation;
         }
     }
 }
