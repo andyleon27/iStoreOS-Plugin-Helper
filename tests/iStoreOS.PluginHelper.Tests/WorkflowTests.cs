@@ -13,15 +13,66 @@ using iStoreOS.PluginHelper.Services;
 
 namespace iStoreOS.PluginHelper.Tests
 {
-    internal static class WorkflowTests
+    internal static partial class WorkflowTests
     {
         private const string Name = "PassWall_26.9.16_x86_64_all_sdk_25.12.run";
         private const string Compat = "https://compat.test/repo/packages.adb";
         private static string FailureUrl(string host) { return "ERROR: fetching https://" + host + "/openwrt/releases/25.12/packages/x86_64/base/packages.adb: temporary error (try again later)"; }
         public static void Run(Action<string, Action> test)
         {
+            SourceTests(test);
+            PerformanceTests(test);
+            foreach (bool arm in new[] { false, true })
+            {
+                bool useArm = arm;
+                string file = useArm ? "PassWall_26.9.16_aarch64_all_sdk_24.10.run" : Name;
+                test("r2 full shared SFTP polling reconnect without redispatch " + (useArm ? "aarch64/OPKG" : "x86_64/APK"), () => Fixture(file, path =>
+                {
+                    var fake = new Fake { UseSftpPolling = true, DisconnectAfterFirstSftpPoll = true };
+                    if (useArm)
+                    {
+                        fake.MakeOpkg(); fake.RouterArchitecture = "aarch64_cortex-a53"; fake.ArchiveArchitecture = "aarch64"; fake.RouterSdk = "24.10"; fake.RouterVersion = "24.10.8";
+                        fake.Rom = "src/gz openwrt_base https://downloads.test/releases/24.10.8/packages/aarch64_cortex-a53/base\n";
+                        fake.Original = "# preserve ARM OPKG source\n" + SoftwareSourceService.RebaseRom(fake.Rom, "https://old.test/openwrt/"); fake.Current = fake.Original;
+                    }
+                    fake.Runs.Enqueue(new Outcome { Log = new string('x', 70000) });
+                    var result = Run(Service(), fake, path); Equal(InstallationState.Success, result.State); Equal(1, fake.Starts); Equal(1, fake.Reconnects);
+                    True(fake.SftpFiles.Creates >= 2); Equal(fake.SftpFiles.Creates, fake.SftpFiles.Disposals); True(fake.SftpFiles.Seeks["stdout.log"] >= 65536);
+                    True(fake.LastLaunch.Contains("launch.once")); True(fake.LastCleanup.Contains(result.Installation.RemoteDirectory)); True(result.Installation.CleanupSucceeded);
+                    Equal(false, System.Text.RegularExpressions.Regex.IsMatch(fake.LastLaunch, @"\b(stat|nohup|base64|dd)\b"));
+                }));
+            }
+            foreach (PackageManagerKind kind in new[] { PackageManagerKind.OPKG, PackageManagerKind.APK })
+            {
+                PackageManagerKind manager = kind;
+                test("V1.0.2 r1 " + manager + " runner capability failure preserves source restoration and no dispatch", () => Fixture(Name, path =>
+                {
+                    var fake = new Fake { RunnerFailure = true }; if (manager == PackageManagerKind.OPKG) fake.MakeOpkg(); fake.BadHosts.Add("old.test");
+                    var result = Run(Service(), fake, path); Equal(InstallationFailureKind.Tool, result.Failure.Kind);
+                    Equal(0, fake.Starts); True(result.SourceRestored); Equal(fake.Original, fake.Current); True(result.Installation.CleanupSucceeded);
+                    True(fake.Events.IndexOf("restore") < fake.Events.IndexOf("cleanup"));
+                }));
+                test("V1.0.2 installation " + manager + " false POST acknowledgement verified state still installs and restores", () => Fixture(Name, path =>
+                {
+                    var fake = new Fake { PostNotAcknowledged = true }; if (manager == PackageManagerKind.OPKG) fake.MakeOpkg(); fake.BadHosts.Add("old.test");
+                    var result = Run(Service(), fake, path); Equal(InstallationState.Success, result.State); Equal(1, fake.Starts);
+                    Equal(1, fake.UpdateCalls); Equal("A", string.Join(",", fake.Switches)); True(result.SourceRestored); Equal(fake.Original, fake.Current);
+                }));
+                test("V1.0.2 installation " + manager + " false acknowledgement wrong actual identity still blocks", () => Fixture(Name, path =>
+                {
+                    var fake = new Fake { PostNotAcknowledged = true, SwitchKeepsOldIdentity = true }; if (manager == PackageManagerKind.OPKG) fake.MakeOpkg(); fake.BadHosts.Add("old.test");
+                    var result = Run(Service(), fake, path); Equal(InstallationFailureKind.Tool, result.Failure.Kind); Equal(0, fake.Starts);
+                    Equal(0, fake.UpdateCalls); True(result.SourceRestored); Equal(fake.Original, fake.Current);
+                }));
+                test("V1.0.2 installation " + manager + " false acknowledgement wrong actual feeds still blocks", () => Fixture(Name, path =>
+                {
+                    var fake = new Fake { PostNotAcknowledged = true, SwitchKeepsOldFeeds = true }; if (manager == PackageManagerKind.OPKG) fake.MakeOpkg(); fake.BadHosts.Add("old.test");
+                    var result = Run(Service(), fake, path); Equal(InstallationFailureKind.Tool, result.Failure.Kind); Equal(0, fake.Starts);
+                    Equal(0, fake.UpdateCalls); True(result.SourceRestored); Equal(fake.Original, fake.Current);
+                }));
+            }
             Case(test, "healthy current source no switch", f => { }, (r, f) => { Equal(InstallationState.Success, r.State); Equal(0, f.Switches.Count); Equal(0, f.Backups); Equal(1, f.Starts); True(r.Installation.CleanupSucceeded); });
-            Case(test, "transient current probe recovery keeps exact current text without POST", f => f.TransientFailures = 1, (r, f) => { Equal(InstallationState.Success, r.State); Equal(0, f.Switches.Count); Equal(0, f.Backups); Equal(f.Original, f.Current); Equal(1, f.Starts); });
+            Case(test, "transient current canary failure is cached and fallback restores exact text", f => f.TransientFailures = 1, (r, f) => { Equal(InstallationState.Success, r.State); Equal(1, f.Switches.Count); Equal(1, f.Backups); Equal(f.Original, f.Current); Equal(1, f.Starts); True(r.SourceRestored); Equal(1, f.ProbeUrls.Count(u => new Uri(u).Host == "old.test")); });
             Case(test, "failed current probe uses FULL fallback and restores exact original", f => f.BadHosts.Add("old.test"), (r, f) => { Equal(InstallationState.Success, r.State); Equal("A", f.Switches.Single()); True(r.SourceRestored); Equal(f.Original, f.Current); True(f.Events.IndexOf("restore") < f.Events.IndexOf("cleanup")); });
             Case(test, "first package update failure proceeds to second source", f => f.Updates.Enqueue(new PackageUpdateResult { ExitCode = 1, Stderr = FailureUrl("old.test") }), (r, f) => { Equal(InstallationState.Success, r.State); Equal(2, f.UpdateCalls); Equal(1, f.Starts); Equal("A", f.Switches.Single()); });
             Case(test, "explicit official download failure permits next run", f => f.Runs.Enqueue(new Outcome { Exit = 1, Log = FailureUrl("old.test") }), (r, f) => { Equal(InstallationState.Success, r.State); Equal(2, f.Starts); Equal(2, r.Attempts.Count); True(r.SourceRestored); });
@@ -33,7 +84,7 @@ namespace iStoreOS.PluginHelper.Tests
             test("V0.3.2 deliberate retry refreshes source and readiness", () => Fixture(Name, path => {
                 var f = new Fake(); var service = Service(); f.BadHosts.UnionWith(new[] { "old.test", "a.test", "b.test" });
                 var first = Run(service, f, path); Equal(InstallationFailureKind.MirrorsExhausted, first.Failure.Kind); int probes = f.Probes;
-                f.BadHosts.Clear(); var second = Run(service, f, path); Equal(InstallationState.Success, second.State); Equal(2, f.CandidateReads); Equal(2, f.ReadinessReads); True(f.Probes > probes);
+                f.BadHosts.Clear(); var second = Run(service, f, path); Equal(InstallationState.Success, second.State); Equal(1, f.CandidateReads); Equal(2, f.ReadinessReads); True(f.Probes > probes);
             }));
             Case(test, "SSH disconnected before click automatically reconnects", f => f.Connected = false, (r, f) => { Equal(InstallationState.Success, r.State); Equal(1, f.Reconnects); });
             Case(test, "SSH lost during poll reconnects to same runner", f => f.DisconnectPoll = true, (r, f) => { Equal(InstallationState.Success, r.State); Equal(1, f.Reconnects); Equal(1, f.Starts); True(r.States.Contains(InstallationState.ReconnectChecking)); });
@@ -41,7 +92,7 @@ namespace iStoreOS.PluginHelper.Tests
             test("V0.3.2 retry verifies completed main without rerunning", () => Fixture(Name, path => {
                 var f = new Fake(); var service = Service(); f.Readiness.PersistentBytes = 1; Equal(InstallationFailureKind.NoSpace, Run(service, f, path).Failure.Kind);
                 f.Readiness.PersistentBytes = 1024 * 1024 * 100; f.Packages.Packages["luci-app-passwall"] = "26.9.16-r1";
-                var result = Run(service, f, path); Equal(InstallationState.Success, result.State); Equal(0, f.Starts); Equal(2, f.CandidateReads); // First round also reads candidates for DNS, each deliberate retry reads them afresh.
+                var result = Run(service, f, path); Equal(InstallationState.Success, result.State); Equal(0, f.Starts); Equal(0, f.CandidateReads); // Failed preflight and healthy-current retry both avoid the lazy candidate endpoint.
             }));
             Case(test, "remote run disappears reupload then rehash", f => f.MissingBeforeDispatch = true, (r, f) => { Equal(InstallationState.Success, r.State); Equal(2, f.Uploads); True(f.HashReads >= 2); Equal(1, f.Starts); });
             Case(test, "success restores exact original comments and hash", f => f.BadHosts.Add("old.test"), (r, f) => { True(r.SourceRestored); Equal(f.Original, f.Current); Equal(1, f.Restores); True(r.OriginalHash.Length == 64); });
@@ -149,8 +200,8 @@ namespace iStoreOS.PluginHelper.Tests
         { test("V0.3.2 " + name, () => Fixture(Name, path => { var f = new Fake(); setup(f); var result = Run(Service(), f, path); check(result, f); })); }
         private static InstallationWorkflowService Service()
         { return new InstallationWorkflowService { BusyChecks = 3, BusyInterval = TimeSpan.FromMilliseconds(1), ReconnectInterval = TimeSpan.FromMilliseconds(1), Engine = new PluginInstallationService { PollInterval = TimeSpan.FromMilliseconds(1) } }; }
-        private static InstallationWorkflowResult Run(InstallationWorkflowService service, Fake fake, string path, CancellationToken token = default(CancellationToken))
-        { var expected = Router(); expected.PackageManager = fake.Manager; return Task.Run(() => service.RunAsync(fake, expected, path, null, token)).GetAwaiter().GetResult(); }
+        private static InstallationWorkflowResult Run(InstallationWorkflowService service, Fake fake, string path, CancellationToken token = default(CancellationToken), IProgress<InstallationWorkflowProgress> progress = null)
+        { var expected = Router(); expected.PackageManager = fake.Manager; expected.Architecture = fake.RouterArchitecture; expected.SdkSeries = fake.RouterSdk; expected.Version = fake.RouterVersion; return Task.Run(() => service.RunAsync(fake, expected, path, progress, token)).GetAwaiter().GetResult(); }
         private static void Fixture(string name, Action<string> body)
         { string folder = Path.Combine(Path.GetTempPath(), "istore-workflow-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(folder); string path = Path.Combine(folder, name); try { File.WriteAllText(path, "abc", new UTF8Encoding(false)); body(path); } finally { File.Delete(path); Directory.Delete(folder); } }
         private static RouterEnvironment Router() { return new RouterEnvironment { IsConnected = true, Version = "25.12.5", SdkSeries = "25.12", Architecture = "x86_64", PackageManager = PackageManagerKind.APK, HostKeyFingerprint = "SHA256:fixture" }; }
@@ -159,11 +210,25 @@ namespace iStoreOS.PluginHelper.Tests
         private static void True(bool value) { Equal(true, value); }
         private static void Equal<T>(T expected, T actual) { if (!object.Equals(expected, actual)) throw new Exception("Expected " + expected + ", actual " + actual); }
         private sealed class Outcome { public int Exit; public string Log = ""; public bool Partial; }
-        private sealed class Fake : IInstallationWorkflowSession, IPluginInstallSession, ISoftwareSourceSession
+        private sealed class Fake : IInstallationWorkflowSession, IPluginInstallSession, ISoftwareSourceSession, IFastRepositoryProbeSession, IInstallerMonitoringSession
         {
             public bool Connected = true, ConnectFailure, ChangedIdentity, Busy, HashMismatch, MakeselfBad, RestoreFailure, MissingBeforeDispatch, DisconnectPoll, LostAcknowledgement, NeverEnds;
             public bool CorruptBeforeDispatch, BusyAfterCheck, HashUnavailable, DuplicateCandidates;
             public bool ForeignRunner;
+            public bool RunnerFailure;
+            public bool UseSftpPolling, DisconnectAfterFirstSftpPoll;
+            public bool UsePersistentPolling;
+            public bool FreshInstallerWrappers;
+            public int PollsBeforeExit;
+            private PersistentInstallerMonitor persistentMonitor;
+            public readonly PersistentPollTests.Files PersistentFiles = new PersistentPollTests.Files();
+            public readonly Dictionary<string, double> FastLatency = new Dictionary<string, double>();
+            public readonly HashSet<string> FastTimeoutHosts = new HashSet<string>();
+            public readonly List<string> FastProbeUrls = new List<string>();
+            public int FastProbeDelayMilliseconds;
+            public readonly SftpPollTests.Files SftpFiles = new SftpPollTests.Files();
+            public string RouterArchitecture = "x86_64", ArchiveArchitecture = "x86_64", RouterSdk = "25.12", RouterVersion = "25.12.5", LastLaunch, LastCleanup;
+            public bool PostNotAcknowledged, SwitchKeepsOldIdentity, SwitchKeepsOldFeeds;
             public int Starts, Uploads, HashReads, Probes, CandidateReads, ReadinessReads, UpdateCalls, Reconnects, BusyReads, BusyRemaining, Backups, Restores, Cleanups, BackupDeletes;
             public string Rom, Original, Current, Identity = "Original", UploadedHash;
             public long Size;
@@ -173,21 +238,23 @@ namespace iStoreOS.PluginHelper.Tests
             public readonly Queue<Outcome> Runs = new Queue<Outcome>();
             public readonly Queue<PackageUpdateResult> Updates = new Queue<PackageUpdateResult>();
             public readonly HashSet<string> BadHosts = new HashSet<string>();
+            public readonly HashSet<string> BadUrls = new HashSet<string>();
+            public readonly List<string> ProbeUrls = new List<string>();
             public readonly List<string> Switches = new List<string>(), Events = new List<string>();
             public readonly PackageSnapshot Packages = PackageSnapshotService.Parse("base-1.0\nluci-app-openclash-0.47.156-r1", PackageManagerKind.APK);
             private Outcome activeOutcome;
             private bool missingUsed;
             public readonly RouterReadiness Readiness = new RouterReadiness { DefaultRoute = true, DnsChecked = 3, DnsResolved = 3, UnixTime = InstallationReadiness.UnixNow, TmpBytes = 1024L * 1024 * 1024, PersistentBytes = 1024 * 1024 * 100 };
-            private readonly SoftwareSourceInfo[] candidates = {
+            public SoftwareSourceInfo[] candidates = {
                 new SoftwareSourceInfo { Identity = "Original", Url = "https://old.test/openwrt/", Name = "Original" }, new SoftwareSourceInfo { Identity = "A", Url = "https://a.test/openwrt/", Name = "A" }, new SoftwareSourceInfo { Identity = "B", Url = "https://b.test/openwrt/", Name = "B" } };
             public Fake() { Rom = "https://downloads.test/releases/25.12/packages/x86_64/base/packages.adb\n"; Original = "# preserve exact comment\n" + SoftwareSourceService.RebaseRom(Rom, "https://old.test/openwrt/"); Current = Original; }
             public void MakeOpkg() { Manager = PackageManagerKind.OPKG; Rom = "src/gz openwrt_base https://downloads.test/releases/24.10/packages/x86_64/base\n"; Original = "# preserve original OPKG comment\n" + SoftwareSourceService.RebaseRom(Rom, "https://old.test/openwrt/"); Current = Original; }
             public bool IsConnected { get { return Connected; } }
-            public IPluginInstallSession Installer { get { return this; } }
+            public IPluginInstallSession Installer { get { return FreshInstallerWrappers ? (IPluginInstallSession)new InstallerFacade(this) : this; } }
             public ISoftwareSourceSession Sources { get { return this; } }
             public string Sanitize(string text) { return text; }
             public RouterEnvironment ConnectAndDetect(RouterEnvironment expected, bool force, Action<string> log, CancellationToken token)
-            { if (!Connected || force) { Reconnects++; if (ConnectFailure) throw new IOException("router unreachable"); Connected = true; } var value = Router(); value.PackageManager = Manager; if (ChangedIdentity) value.HostKeyFingerprint = "changed"; return value; }
+            { if (!Connected || force) { Reconnects++; if (ConnectFailure) throw new IOException("router unreachable"); Connected = true; } var value = Router(); value.PackageManager = Manager; value.Architecture = RouterArchitecture; value.SdkSeries = RouterSdk; value.Version = RouterVersion; if (ChangedIdentity) value.HostKeyFingerprint = "changed"; return value; }
             public RouterReadiness ReadReadiness(IList<RepositoryFeed> feeds) { ReadinessReads++; return Readiness; }
             public bool PackageManagerBusy(PackageManagerKind manager) { BusyReads++; if (ForeignRunner) throw new InstallationPolicyException(InstallationFailureKind.PackageManagerBusy, "发现旧安装 session；不启动新安装器。"); return Busy || BusyRemaining-- > 0; }
             public bool WasLaunched(RemoteTempSession remote) { return Starts > 0; }
@@ -198,8 +265,22 @@ namespace iStoreOS.PluginHelper.Tests
             { return manager == PackageManagerKind.OPKG ? new Dictionary<string, string> { { "/etc/opkg/compat.conf", "src/gz compat https://compat.test/repo" } } : new Dictionary<string, string> { { "/etc/apk/repositories.d/compat.list", Compat }, { "/etc/apk/repositories.d/custom.list", "https://custom.test/repo/packages.adb" } }; }
             public ProbeResult QuickStartGet(bool list)
             { if (list) CandidateReads++; object value = list ? (object)new { softSourceList = DuplicateCandidates ? candidates.Concat(candidates).Concat(new[] { new SoftwareSourceInfo { Identity = "AAlias", Name = "alias A", Url = "https://a.test/openwrt/" } }).ToArray() : candidates } : new { softSource = candidates.First(c => c.Identity == Identity) }; return Ok(new JavaScriptSerializer().Serialize(new { success = true, result = value })); }
-            public ProbeResult QuickStartSwitch(string identity) { Identity = identity; Switches.Add(identity); Current = SoftwareSourceService.RebaseRom(Rom, candidates.First(c => c.Identity == identity).Url); Events.Add("switch"); if (AfterSwitch != null) AfterSwitch(); return Ok("{\"success\":true}"); }
-            public ProbeResult ProbeIndex(string url) { Probes++; bool failed = BadHosts.Contains(new Uri(url).Host) || TransientFailures-- > 0; return Ok("ISTORE_PROBE|" + (failed ? "404" : "206") + "|0.1"); }
+            public ProbeResult QuickStartSwitch(string identity) { if (!SwitchKeepsOldIdentity) Identity = identity; Switches.Add(identity); if (!SwitchKeepsOldFeeds) Current = SoftwareSourceService.RebaseRom(Rom, candidates.First(c => c.Identity == identity).Url); Events.Add("switch"); if (AfterSwitch != null) AfterSwitch(); return Ok(PostNotAcknowledged ? "{\"success\":false}" : "{\"success\":true}"); }
+            public ProbeResult ProbeIndex(string url) { Probes++; ProbeUrls.Add(url); bool failed = BadUrls.Contains(url) || BadHosts.Contains(new Uri(url).Host) || TransientFailures-- > 0; return Ok("ISTORE_PROBE|" + (failed ? "404" : "206") + "|0.1"); }
+            public ProbeResult ProbeIndexFast(string url)
+            {
+                FastProbeUrls.Add(url); if (FastProbeDelayMilliseconds > 0) Thread.Sleep(FastProbeDelayMilliseconds);
+                var result = ProbeIndex(url); string host = new Uri(url).Host; double latency;
+                if (FastTimeoutHosts.Contains(host)) return new ProbeResult { ExitStatus = 28, Output = "ISTORE_PROBE|000|3.0", Error = "fast timeout" };
+                if (FastLatency.TryGetValue(host, out latency)) result.Output = result.Output.Substring(0, result.Output.LastIndexOf('|') + 1) + (latency / 1000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return result;
+            }
+            public IDisposable OpenInstallerMonitor(RemoteTempSession s)
+            {
+                if (!UsePersistentPolling) return new PerformanceScope(() => { });
+                persistentMonitor = new PersistentInstallerMonitor(PersistentFiles.Create, s);
+                return new PerformanceScope(() => { persistentMonitor.Dispose(); persistentMonitor = null; });
+            }
             public PackageUpdateResult Update(PackageManagerKind manager) { UpdateCalls++; return Updates.Count > 0 ? Updates.Dequeue() : new PackageUpdateResult { ExitCode = 0, Stdout = "OK: 12048 distinct packages available" }; }
             public string BackupOfficial(PackageManagerKind manager) { Backups++; return "/tmp/istore-plugin-helper.ABCDEFGH/distfeeds.backup"; }
             public ProbeResult ReadBackup(string path) { return Ok(Original); }
@@ -210,21 +291,55 @@ namespace iStoreOS.PluginHelper.Tests
             public long RemoteFileSize(RemoteTempSession remote) { if (MissingBeforeDispatch && !missingUsed && HashReads > 0) { missingUsed = true; throw new FileNotFoundException(); } return Size; }
             public ProbeResult RemoteHash(RemoteTempSession remote) { HashReads++; if (HashUnavailable) return new ProbeResult { ExitStatus = 127 }; return Ok(HashMismatch || (CorruptBeforeDispatch && HashReads >= 2) ? new string('0', 64) : UploadedHash); }
             public ProbeResult Inspect(RemoteTempSession remote, bool check)
-            { if (check && BusyAfterCheck) Busy = true; return check ? MakeselfBad ? new ProbeResult { ExitStatus = 2, Error = "checksum failed" } : Ok("MD5 checksums are OK.\nAll good.") : Ok("Identification: PassWall_26.9.16_with_sdk_25.12\nTarget directory: x86_64\nUncompressed size: 80 KB\n"); }
+            { if (check && BusyAfterCheck) Busy = true; return check ? MakeselfBad ? new ProbeResult { ExitStatus = 2, Error = "checksum failed" } : Ok("MD5 checksums are OK.\nAll good.") : Ok("Identification: PassWall_26.9.16_with_sdk_" + RouterSdk + "\nTarget directory: " + ArchiveArchitecture + "\nUncompressed size: 80 KB\n"); }
             public PackageSnapshot Snapshot(PackageManagerKind manager) { return PackageSnapshotService.Parse(string.Join("\n", Packages.Packages.Select(p => p.Key + (manager == PackageManagerKind.OPKG ? " - " : "-") + p.Value)), manager); }
             public bool PackageExists(PackageManagerKind manager, string name) { return Packages.Packages.ContainsKey(name); }
-            public void CheckRunner() { }
+            public void CheckRunner() { if (RunnerFailure) throw new IOException("后台安装能力检查失败（exit 127）：Missing required runner command(s): base64"); }
             public void StartInstaller(RemoteTempSession remote)
-            { Starts++; activeOutcome = Runs.Count > 0 ? Runs.Dequeue() : new Outcome(); if (AfterStart != null) AfterStart(); if (LostAcknowledgement) { LostAcknowledgement = false; Connected = false; throw new IOException("lost acknowledgement"); } }
+            { Starts++; LastLaunch = PluginInstallCommands.Launch(remote); activeOutcome = Runs.Count > 0 ? Runs.Dequeue() : new Outcome(); if (AfterStart != null) AfterStart(); if (LostAcknowledgement) { LostAcknowledgement = false; Connected = false; throw new IOException("lost acknowledgement"); } }
             public InstallerPoll PollInstaller(RemoteTempSession remote, long stdoutOffset, long stderrOffset)
             {
                 if (DisconnectPoll) { DisconnectPoll = false; Connected = false; throw new IOException("SSH lost"); }
+                if (UseSftpPolling && DisconnectAfterFirstSftpPoll && SftpFiles.Creates > 0) { DisconnectAfterFirstSftpPoll = false; Connected = false; throw new IOException("SSH lost between SFTP polls"); }
                 if (activeOutcome.Partial) Packages.Packages["dependency"] = "1.0";
                 if (activeOutcome.Exit == 0) Packages.Packages["luci-app-passwall"] = "26.9.16-r1";
+                if (UsePersistentPolling)
+                {
+                    PersistentFiles.Data[remote.Directory + "/stdout.log"] = Encoding.UTF8.GetBytes(activeOutcome.Log + "\n");
+                    PersistentFiles.Data[remote.Directory + "/stderr.log"] = new byte[0];
+                    if (!NeverEnds && PollsBeforeExit-- <= 0) PersistentFiles.Data[remote.Directory + "/exit.code"] = Encoding.ASCII.GetBytes(activeOutcome.Exit.ToString());
+                    return persistentMonitor.Poll(stdoutOffset, stderrOffset);
+                }
+                if (UseSftpPolling)
+                {
+                    SftpFiles.Data[remote.Directory + "/stdout.log"] = Encoding.UTF8.GetBytes(activeOutcome.Log + "\n");
+                    SftpFiles.Data[remote.Directory + "/stderr.log"] = new byte[0];
+                    if (!NeverEnds) SftpFiles.Data[remote.Directory + "/exit.code"] = Encoding.ASCII.GetBytes(activeOutcome.Exit.ToString());
+                    return new SftpInstallerPoller().Poll(SftpFiles.Create, remote, stdoutOffset, stderrOffset);
+                }
                 byte[] data = stdoutOffset == 0 ? Encoding.UTF8.GetBytes(activeOutcome.Log + "\n") : new byte[0];
                 return new InstallerPoll { Stdout = data, Stderr = new byte[0], ExitCode = NeverEnds ? (int?)null : activeOutcome.Exit };
             }
-            public bool Cleanup(RemoteTempSession remote) { Cleanups++; Events.Add("cleanup"); return true; }
+            public bool Cleanup(RemoteTempSession remote) { Cleanups++; LastCleanup = remote.CleanupCommand(); Events.Add("cleanup"); return true; }
+            private sealed class InstallerFacade : IPluginInstallSession, IInstallerMonitoringSession
+            {
+                private readonly Fake inner; private bool monitoring;
+                public InstallerFacade(Fake inner) { this.inner = inner; }
+                public IDisposable OpenInstallerMonitor(RemoteTempSession s) { var scope = inner.OpenInstallerMonitor(s); monitoring = true; return new PerformanceScope(() => { try { scope.Dispose(); } finally { monitoring = false; } }); }
+                public InstallerPoll PollInstaller(RemoteTempSession s, long stdout, long stderr) { if (!monitoring) throw new InvalidOperationException("Monitor owner was replaced"); return inner.PollInstaller(s, stdout, stderr); }
+                public string Sanitize(string text) { return inner.Sanitize(text); }
+                public long TmpAvailable() { return inner.TmpAvailable(); }
+                public void CreateDirectory(RemoteTempSession s) { inner.CreateDirectory(s); }
+                public void Upload(Stream source, RemoteTempSession s, Action<long> progress, CancellationToken token) { inner.Upload(source, s, progress, token); }
+                public long RemoteFileSize(RemoteTempSession s) { return inner.RemoteFileSize(s); }
+                public ProbeResult RemoteHash(RemoteTempSession s) { return inner.RemoteHash(s); }
+                public ProbeResult Inspect(RemoteTempSession s, bool check) { return inner.Inspect(s, check); }
+                public PackageSnapshot Snapshot(PackageManagerKind manager) { return inner.Snapshot(manager); }
+                public bool PackageExists(PackageManagerKind manager, string name) { return inner.PackageExists(manager, name); }
+                public void CheckRunner() { inner.CheckRunner(); }
+                public void StartInstaller(RemoteTempSession s) { inner.StartInstaller(s); }
+                public bool Cleanup(RemoteTempSession s) { return inner.Cleanup(s); }
+            }
         }
     }
 }

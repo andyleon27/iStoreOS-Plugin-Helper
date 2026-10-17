@@ -2,7 +2,9 @@
 
 Windows 下用于辅助安装本地 Are-u-ok `.run` 插件到 iStoreOS 的开源工具。
 
-当前版本：**V1.0.1（1.0.1）**，修复 ARM64 架构兼容性误判。License：**MIT**。
+当前公开版本：**V1.0.2（1.0.2）**。项目自有源码采用 **MIT License**。
+
+本版完善精简 OpenWrt / BusyBox 环境下的 ARM64 / OPKG 安装兼容性：保留真实 package update Gate，动态选择可靠镜像，复用受信任 SFTP 监测连接，并在临时换源安装后恢复原始官方 distfeeds。原有 x86_64 / APK 安装链保持。
 
 核心流程：**连接路由器 → 拖入插件 → 点击安装**。
 
@@ -16,15 +18,15 @@ Windows 下用于辅助安装本地 Are-u-ok `.run` 插件到 iStoreOS 的开源
 - 独立验证主 package，记录 Package Diff，清理本轮临时文件并尝试恢复临时修改的官方源。
 - 极简主窗口，以及独立的高级信息、完整日志保存与复制窗口。
 
-已真实验证 **PassWall 26.9.16** 和 **OpenWrt-momo 1.2.1**。安装框架是通用的，其他格式兼容的 Are-u-ok `.run` 会进行自动识别和验证；这不代表所有第三方插件或固件都已实测。
+本版已实测：N1 / iStoreOS 24.10.8 / SDK 24.10 / aarch64_cortex-a53 / OPKG 上的 **PassWall 26.10.16、OpenClash 0.47.156、daede 1.15-r6**，以及 iStoreOS 25.12.5 / SDK 25.12 / x86_64 / APK 上的 **daede 1.14.7-r23**，均为 SuccessVerified。此前还真实验证过 PassWall 26.9.16 和 OpenWrt-momo 1.2.1。工具定位为通用 iStoreOS / OpenWrt 兼容辅助工具，实测列表不是设备白名单，也不代表所有第三方插件或固件均已实测。
 
 ## 下载
 
-从 [V1.0.1 GitHub Release](https://github.com/andyleon27/iStoreOS-Plugin-Helper/releases/tag/v1.0.1) 下载 `iStoreOS.PluginHelper-v1.0.1-win-x64.zip`，解压后直接运行 EXE。无需 clone 源码或自行编译。发布附件中的 `SHA256SUMS.txt` 可用于核对下载文件。
+从 [V1.0.2 GitHub Release](https://github.com/andyleon27/iStoreOS-Plugin-Helper/releases/tag/v1.0.2) 下载 `iStoreOS.PluginHelper-v1.0.2-win-x64.zip`，解压后直接运行 EXE。无需 clone 源码或自行编译。发布附件中的 `SHA256SUMS.txt` 可用于核对下载文件。
 
-V1.0.1 已在 iStoreOS 24.10.8 / SDK 24.10 / aarch64_cortex-a53 / OPKG 设备完成四个插件文件名的实机兼容性验收，A72 反例保持不兼容。本次验收未执行安装；正式附件复用同一个已验收 ZIP。
+架构匹配保留原有语义规则：`aarch64_a53` / `aarch64_a72` 分别归一到 Cortex-A53 / A72，bare `aarch64` 可以识别 ARM64 设备家族，具体 A72 包不能因此放行到 A53。`aarch64_generic` 保持安全匹配规则，SDK 仍严格匹配；工具保留设备和插件原始架构显示。
 
-V1.0.1 按“插件 → 设备”判断架构：`aarch64_a53` / `aarch64_a72` 分别归一到 Cortex-A53 / A72；bare `aarch64` 可以匹配 ARM64 设备家族，具体 A72 包不能因此放行到 A53。`aarch64_generic` 包目前只匹配 generic 设备。作者已知的 A53 插件 → generic 设备关系仅作为 **Are-u-ok ARM64 compatibility rule**，不作为通用 OpenWrt ABI 结论。设备 / 插件原始架构保持显示，SDK 仍严格匹配。
+验证：**611 passed / 0 failed**，离线 Runner Smoke **12 / 12**，Release x64 **0 warning / 0 error**。详见 [正式验证报告](docs/V1.0.2-验证报告.md) 与 [Release Notes](docs/release-notes-v1.0.2.md)。本次 N1 和 x86 真实安装均只使用一条 SFTP 监测连接；健康当前源不主动切换，临时换源后恢复原始 distfeeds。完整快照用于 Package Diff 和独立验证，日志只输出数量、真实变化项和阶段 Timing Summary。
 
 ## 使用方法
 
@@ -82,5 +84,4 @@ V1.0.1 按“插件 → 设备”判断架构：`aarch64_a53` / `aarch64_a72` �
 
 项目自有源码采用 [MIT License](LICENSE)。第三方依赖按照各自许可证分发，见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
-发布说明见 [V1.0.1 Release Notes](docs/release-notes-v1.0.1.md)，变更记录见 [CHANGELOG.md](CHANGELOG.md)，测试与实机兼容性验收见 [V1.0.1 验证报告](docs/V1.0.1-test-验证报告.md)。[V1.0 Release Notes](docs/release-notes-v1.0.0.md)、V1.0 与历史 RC1 验证报告继续保留在 docs 中。
-
+发布说明见 [V1.0.2 Release Notes](docs/release-notes-v1.0.2.md)，变更记录见 [CHANGELOG.md](CHANGELOG.md)，验证结论见 [V1.0.2 验证报告](docs/V1.0.2-验证报告.md)。历史版本与测试阶段记录继续保留在 docs 中。

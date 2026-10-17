@@ -12,12 +12,47 @@ using iStoreOS.PluginHelper.Services;
 
 namespace iStoreOS.PluginHelper.Tests
 {
-    internal static class InstallationTests
+    internal static partial class InstallationTests
     {
         private const string PassWall = "PassWall_26.9.16_x86_64_all_sdk_25.12.run";
         private const string AbcHash = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
         public static void Run(Action<string, Action> test)
         {
+            SnapshotLoggingTests(test);
+            foreach (string command in new[] { "sh", "base64", "dd" })
+            {
+                string missing = command;
+                test("V1.0.2 r1 missing runner " + missing + " stops before confirmation and dispatch", () => Fixture(PassWall, path =>
+                {
+                    var fake = new FakeSession { RunnerFailure = "Missing required runner command(s): " + missing };
+                    int confirmations = 0;
+                    var result = Workflow(fake, path, SoftwareEnvironmentStatus.Ready, summary => { confirmations++; return Task.FromResult(true); });
+                    Equal(InstallStatus.FailedPrecheck, result.Status); True(result.Message.Contains(missing)); Equal(1, fake.RunnerChecks);
+                    Equal(2, fake.Inspections); Equal(0, fake.Snapshots); Equal(0, confirmations); Equal(0, fake.Starts);
+                    Equal(false, result.InstallerStarted); True(result.CleanupSucceeded);
+                }));
+            }
+            test("V1.0.2 r1 unsupported HUP trap stops without claiming launch", () => Fixture(PassWall, path =>
+            {
+                var fake = new FakeSession { RunnerFailure = "Cannot ignore SIGHUP with shell trap" };
+                var result = Workflow(fake, path); Equal(InstallStatus.FailedPrecheck, result.Status);
+                True(result.Message.Contains("HUP")); Equal(0, fake.Starts); Equal(false, result.InstallerStarted); True(result.CleanupSucceeded);
+            }));
+            test("V1.0.2 r1 capability check diagnostics identify post Makeself stage", () => Fixture(PassWall, path =>
+            {
+                var fake = new FakeSession { RunnerFailure = "Missing required runner command(s): dd" }; var logs = new List<string>();
+                var result = Workflow(fake, path, progress: new InlineProgress(value => { if (value.Log != null) logs.Add(value.Log); }));
+                True(logs.Any(line => line.Contains("Makeself --check") && line.Contains("exit=0")));
+                True(logs.Any(line => line.Contains("检查 shell 内建 HUP trap")));
+                Equal(false, logs.Any(line => line.Contains("后台启动能力检查通过"))); True(result.Message.Contains("dd")); Equal(0, fake.Starts);
+            }));
+            test("V1.0.2 r1 supported runner logs capability success and dispatches once", () => Fixture(PassWall, path =>
+            {
+                var fake = new FakeSession(); var logs = new List<string>();
+                var result = Workflow(fake, path, progress: new InlineProgress(value => { if (value.Log != null) logs.Add(value.Log); }));
+                Equal(InstallStatus.SuccessVerified, result.Status); Equal(1, fake.RunnerChecks); Equal(1, fake.Starts);
+                True(logs.Any(line => line.Contains("后台启动能力检查通过"))); True(result.CleanupSucceeded);
+            }));
             test("V0.3 local SHA256 known vector", () =>
             { using (var stream = new MemoryStream(Encoding.UTF8.GetBytes("abc"))) { Equal(AbcHash, PluginPackageInspection.ComputeSha256(stream)); Equal(0L, stream.Position); } });
             test("V0.3 remote SHA256 accepts uppercase and rejects invalid", () =>
@@ -208,6 +243,8 @@ namespace iStoreOS.PluginHelper.Tests
             public int Creates, Uploads, HashReads, Inspections, Starts, Snapshots, Cleanups, Exit;
             public long UploadedSize;
             public string UploadedHash, InfoText = Info();
+            public string RunnerFailure;
+            public int RunnerChecks;
             public ProbeResult CheckResult = Check();
             public Action UploadHook, StartHook;
             public string Sanitize(string text) { return (text ?? "").Replace("test-secret", "[已隐藏]"); }
@@ -220,7 +257,7 @@ namespace iStoreOS.PluginHelper.Tests
             public ProbeResult Inspect(RemoteTempSession s, bool check) { Inspections++; return check ? CheckResult : new ProbeResult { ExitStatus = 0, Output = InfoText }; }
             public PackageSnapshot Snapshot(PackageManagerKind manager) { Snapshots++; if (Starts > 0 && AfterSnapshotFailure) throw new IOException("database unavailable"); return Starts > 0 ? After : Before; }
             public bool PackageExists(PackageManagerKind manager, string name) { Queries.Add(name); return !QueryFailures.Contains(name) && (Starts > 0 ? After : Before).Packages.ContainsKey(name); }
-            public void CheckRunner() { }
+            public void CheckRunner() { RunnerChecks++; if (RunnerFailure != null) throw new IOException("后台安装能力检查失败（exit 127）：" + RunnerFailure); }
             public void StartInstaller(RemoteTempSession s) { Starts++; if (StartHook != null) StartHook(); if (LaunchFailure) throw new IOException("lost acknowledgement"); }
             public InstallerPoll PollInstaller(RemoteTempSession s, long stdoutOffset, long stderrOffset)
             { return Polls.Count > 0 ? Polls.Dequeue() : new InstallerPoll { Stdout = new byte[0], Stderr = new byte[0], ExitCode = NeverEnds ? (int?)null : Exit }; }

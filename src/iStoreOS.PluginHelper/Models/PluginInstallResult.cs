@@ -86,5 +86,6 @@ namespace iStoreOS.PluginHelper.Models
         public byte[] Stdout { get; set; }
         public byte[] Stderr { get; set; }
         public int? ExitCode { get; set; }
+        public string Diagnostic { get; set; }
     }
 }

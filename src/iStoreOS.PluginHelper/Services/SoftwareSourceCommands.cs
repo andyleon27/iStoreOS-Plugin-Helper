@@ -44,6 +44,12 @@ namespace iStoreOS.PluginHelper.Services
             return "curl --silent --show-error -L -r 0-0 --max-filesize 1 --connect-timeout 5 --max-time 15 " +
                 "--proto '=http,https' --proto-redir '=http,https' -o /dev/null --write-out 'ISTORE_PROBE|%{http_code}|%{time_total}' -- " + ShellArgument.Quote(url);
         }
+        public static string ProbeIndexFast(string url)
+        {
+            if (!ShellArgument.IsHttpUrl(url)) throw new ArgumentException("Invalid HTTP repository URL.");
+            return "curl --silent --show-error -L -r 0-0 --max-filesize 1 --connect-timeout 2 --max-time 3 " +
+                "--proto '=http,https' --proto-redir '=http,https' -o /dev/null --write-out 'ISTORE_PROBE|%{http_code}|%{time_total}' -- " + ShellArgument.Quote(url);
+        }
         public static string Update(PackageManagerKind manager)
         {
             string command = manager == PackageManagerKind.APK ? "apk update" : manager == PackageManagerKind.OPKG ? "opkg update" : null;

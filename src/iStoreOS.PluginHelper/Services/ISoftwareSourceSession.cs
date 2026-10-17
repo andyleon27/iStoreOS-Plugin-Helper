@@ -3,6 +3,7 @@ using iStoreOS.PluginHelper.Models;
 
 namespace iStoreOS.PluginHelper.Services
 {
+    public interface IFastRepositoryProbeSession { ProbeResult ProbeIndexFast(string url); }
     // Small typed boundary for the existing SSH session and deterministic workflow tests.
     // There is no arbitrary-command, upload, install, UCI or service-control method.
     public interface ISoftwareSourceSession

@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## 1.0.2
+
+发布日期：2026-10-18。
+
+- 改善 ARM64 / OPKG 在精简 OpenWrt / BusyBox 环境下的安装兼容性，减少对 stat、nohup 等外部工具的运行时依赖。
+- Runner / Poll 不再依赖 base64 / dd，使用受信任 SFTP 直接读取原始日志和结束状态；监测期间复用连接，断线恢复同一任务，不重复启动安装器。
+- 当前源异常时，通过 QuickStart 动态候选、Canary、延迟筛选和 FULL 验证选择可靠镜像；保留真实 apk/opkg update Gate。
+- 临时换源后恢复安装前原始官方 distfeeds；保持 SHA256、Makeself、Package Diff、独立验证和临时目录安全边界。
+- 保留完整 Package Snapshot 数据，精简日志并记录阶段 Timing Summary。
+- 已在 N1 / aarch64_cortex-a53 / OPKG 和 x86_64 / APK 完成真实安装验证。
+
+验证：611 passed / 0 failed；离线 Runner Smoke 12 / 12；Release x64 0 warning / 0 error。
+
 ## 1.0.1
 
 发布日期：2026-10-17。

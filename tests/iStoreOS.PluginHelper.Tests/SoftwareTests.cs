@@ -32,6 +32,19 @@ namespace iStoreOS.PluginHelper.Tests
                 Equal(SoftwareEnvironmentStatus.Ready, result.Status); Equal(0, fake.Switches.Count); Equal(0, fake.Backups); Equal(false, result.SourceSwitchOccurred); Equal(1, fake.UpdateCalls);
                 Equal(0, fake.CandidateReads); Equal(false, result.RecoveryAttempted);
             });
+            test("V1.0.2 r3 advanced diagnostics retain full current and additional probes", () =>
+            {
+                var fake = new FakeSession(); var result = RunWorkflow(fake);
+                Equal(8, fake.ProbeCount("old.test")); Equal(1, fake.ProbeCount("compat.test"));
+                Equal(8, result.OfficialHealth.Successful); Equal(1, result.AdditionalHealth.Successful); Equal(0, fake.CandidateReads);
+            });
+            test("V1.0.2 r3 advanced repair stops at first FULL without post-switch reprobing", () =>
+            {
+                var fake = RepairFixture(); var result = RunWorkflow(fake);
+                Equal(SoftwareEnvironmentStatus.Ready, result.Status); Equal("A", fake.Switches.Single());
+                Equal(8, fake.ProbeCount("a.test")); Equal(0, fake.ProbeCount("b.test")); Equal(8, fake.ProbeCount("old.test"));
+                Equal(1, result.Candidates.Count); Equal(2, fake.UpdateCalls);
+            });
             test("V0.2 current DOWN, candidate A DOWN, B FULL chooses B", () =>
             {
                 var fake = RepairFixture(); fake.GoodByHost["a.test"] = 0;
@@ -162,6 +175,8 @@ namespace iStoreOS.PluginHelper.Tests
             test("V0.2 POST mutates then throws still recovers", () =>
             {
                 var fake = RepairFixture(); fake.ThrowAfterPost = true;
+                // Force real update failures: an unacknowledged POST alone is no longer a failure.
+                fake.UpdateResults.Enqueue(Failure("https://a.test/openwrt/")); fake.UpdateResults.Enqueue(Failure("https://b.test/openwrt/"));
                 var result = RunWorkflow(fake); True(result.RecoveryAttempted); True(result.RecoverySucceeded); Equal(fake.Original, fake.Current);
             });
             test("V0.2 cancellation after POST still recovers", () =>
@@ -245,6 +260,7 @@ namespace iStoreOS.PluginHelper.Tests
             public readonly List<string> Switches = new List<string>();
             public readonly Dictionary<string, int> GoodByHost = new Dictionary<string, int>();
             private readonly Dictionary<string, int> counts = new Dictionary<string, int>();
+            public int ProbeCount(string host) { int count; return counts.TryGetValue(host, out count) ? count : 0; }
             public readonly Queue<PackageUpdateResult> UpdateResults = new Queue<PackageUpdateResult>();
             public readonly List<SoftwareSourceInfo> Candidates = new List<SoftwareSourceInfo>();
             public FakeSession()

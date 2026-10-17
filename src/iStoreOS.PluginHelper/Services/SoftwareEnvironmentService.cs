@@ -41,7 +41,7 @@ namespace iStoreOS.PluginHelper.Services
                 if (initial.Success && result.OfficialHealth.Status == RepositoryHealth.FULL)
                 { result.Status = SoftwareEnvironmentStatus.Ready; result.Message = "✓ 软件环境已就绪；当前源无需修改。"; return result; }
                 token.ThrowIfCancellationRequested();
-                if (!initial.Success && (PackageManagerService.IsNonSourceFailure(initial) ||
+                if (!initial.Success && (!initial.OfficialRepositoryFailure || PackageManagerService.IsNonSourceFailure(initial) ||
                     (initial.AdditionalRepositoryFailure && !initial.OfficialRepositoryFailure)))
                 { result.Status = SoftwareEnvironmentStatus.Failed; result.Message = "package update 失败，错误涉及固定 / 自定义源或包兼容性；不轮换官方镜像，详情见日志。"; return result; }
                 if (initial.Success)
@@ -56,60 +56,55 @@ namespace iStoreOS.PluginHelper.Services
                 if (string.IsNullOrWhiteSpace(snapshot.RomText))
                 { result.Status = SoftwareEnvironmentStatus.Unsupported; result.Message = "ROM 源模板不可读，无法安全生成候选源；未修改配置。"; return result; }
                 report("正在检测 QuickStart 候选源…", null);
-                candidates = quick.ReadCandidates(session, logOnly);
-                foreach (SoftwareSourceInfo candidate in candidates)
+                var search = new OfficialSourceSearch(snapshot, router.PackageManager, new RepositoryProbeRound());
+                bool prepared = false;
+                foreach (SoftwareRepairPlan plan in search.Find(session, () => {
+                    candidates = quick.ReadCandidates(session, logOnly); return candidates;
+                }, report, token, result.Candidates))
                 {
-                    token.ThrowIfCancellationRequested();
-                    string rebased = SoftwareSourceService.RebaseRom(snapshot.RomText, candidate.Url);
-                    var feeds = SoftwareSourceService.ParseFeeds(rebased, router.PackageManager, snapshot.DistfeedsPath, RepositoryKind.Official);
-                    RepositoryHealthResult health = probes.Probe(session, feeds, report, token, "候选源 " + candidate.ToString());
-                    logOnly("候选源 " + candidate + "：" + health + "；平均 " + health.AverageMilliseconds.ToString("F0") + " ms");
-                    result.Candidates.Add(new SoftwareRepairPlan { OriginalSource = snapshot.CurrentSource, ProposedSource = candidate, Probe = health });
-                }
-                var full = result.Candidates.Where(c => c.Probe.Status == RepositoryHealth.FULL)
-                    .OrderBy(c => new Uri(c.ProposedSource.Url).Scheme == "https" ? 0 : 1).ThenBy(c => c.Probe.AverageMilliseconds).ToList();
-                if (full.Count == 0)
-                { result.Status = SoftwareEnvironmentStatus.Failed; result.Message = "没有完整可用的 QuickStart 候选源；未修改当前配置。"; return result; }
-                token.ThrowIfCancellationRequested();
-                report("等待确认自动修复…", "当前源存在问题；已找到 FULL 候选，首次 POST 前等待用户确认。");
-                if (confirmRepair == null || !await confirmRepair(full[0]))
-                { result.Status = SoftwareEnvironmentStatus.Cancelled; result.Message = "已取消自动修复；软件源未修改。"; return result; }
-                token.ThrowIfCancellationRequested();
-                ProbeResult beforeBackup = session.ReadOfficial(router.PackageManager, false);
-                if (beforeBackup.ExitStatus != 0 || beforeBackup.Output != snapshot.OriginalText)
-                    throw new InvalidOperationException("检测期间官方源配置已变化，请重新检测；未执行切换。");
-                result.BackupPath = session.BackupOfficial(router.PackageManager);
-                ProbeResult backup = session.ReadBackup(result.BackupPath);
-                if (backup.ExitStatus != 0 || backup.Output != snapshot.OriginalText)
-                    throw new InvalidOperationException("备份校验失败，禁止切换软件源。");
-                logOnly("原始 distfeeds 原文已备份：" + result.BackupPath + "；原 identity：" + (snapshot.CurrentSource == null ? "未知" : snapshot.CurrentSource.Identity));
-                foreach (SoftwareRepairPlan plan in full)
-                {
+                    if (!prepared)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        report("等待确认自动修复…", "当前源存在问题；已找到首个 FULL 候选，首次 POST 前等待用户确认。");
+                        if (confirmRepair == null || !await confirmRepair(plan))
+                        { result.Status = SoftwareEnvironmentStatus.Cancelled; result.Message = "已取消自动修复；软件源未修改。"; return result; }
+                        token.ThrowIfCancellationRequested();
+                        ProbeResult beforeBackup = session.ReadOfficial(router.PackageManager, false);
+                        if (beforeBackup.ExitStatus != 0 || beforeBackup.Output != snapshot.OriginalText)
+                            throw new InvalidOperationException("检测期间官方源配置已变化，请重新检测；未执行切换。");
+                        result.BackupPath = session.BackupOfficial(router.PackageManager);
+                        ProbeResult backup = session.ReadBackup(result.BackupPath);
+                        if (backup.ExitStatus != 0 || backup.Output != snapshot.OriginalText)
+                            throw new InvalidOperationException("备份校验失败，禁止切换软件源。");
+                        logOnly("原始 distfeeds 原文已备份：" + result.BackupPath + "；原 identity：" + (snapshot.CurrentSource == null ? "未知" : snapshot.CurrentSource.Identity));
+                        prepared = true;
+                    }
                     token.ThrowIfCancellationRequested();
                     report("正在切换到 " + plan.ProposedSource + "…", "切换尝试：从 " + (result.CurrentSource == null ? "自定义 / 未知来源" : result.CurrentSource.ToString()) + " 到 " + plan.ProposedSource);
                     result.SwitchAttempted = true;
                     mutationMayHaveOccurred = true; // POST may mutate before a connection/response error.
-                    bool switched = false;
-                    try { switched = quick.Switch(session, plan.ProposedSource.Identity, logOnly); }
+                    bool acknowledged = false;
+                    try { acknowledged = quick.Switch(session, plan.ProposedSource.Identity, logOnly); }
                     catch (Exception exception) { logOnly("POST 异常：" + session.Sanitize(exception.Message)); }
                     SoftwareSourceInfo current = quick.ReadCurrent(session, logOnly);
                     ProbeResult configured = session.ReadOfficial(router.PackageManager, false);
                     if (configured.ExitStatus == 0 && configured.Output != snapshot.OriginalText) result.SourceSwitchOccurred = true;
                     string expected = SoftwareSourceService.RebaseRom(snapshot.RomText, plan.ProposedSource.Url);
-                    if (!switched || current == null || current.Identity != plan.ProposedSource.Identity || configured.ExitStatus != 0 ||
+                    logOnly("QuickStart POST acknowledgement=" + acknowledged + "；以实际 identity / distfeeds 验证切换结果。");
+                    if (current == null || current.Identity != plan.ProposedSource.Identity || configured.ExitStatus != 0 ||
                         !SoftwareSourceService.MatchesFeeds(configured.Output, expected, router.PackageManager))
                     { logOnly("切换未通过当前 identity / distfeeds 完整路径验证，尝试下一个 FULL 候选。"); continue; }
+                    logOnly("实际 identity / distfeeds 已确认切换成功。");
                     result.CurrentSource = current;
-                    // Re-probe actual configured paths, rather than trusting pre-switch results.
+                    // Exact configured feed equality binds the previously verified FULL URL set.
                     var actualFeeds = SoftwareSourceService.ParseFeeds(configured.Output, router.PackageManager, snapshot.DistfeedsPath, RepositoryKind.Official);
-                    result.OfficialHealth = probes.Probe(session, actualFeeds, report, token, "切换后的官方源");
-                    if (result.OfficialHealth.Status != RepositoryHealth.FULL) { logOnly("切换后的实际索引不再 FULL，继续候选。"); continue; }
+                    result.OfficialHealth = plan.Probe;
                     token.ThrowIfCancellationRequested();
                     PackageUpdateResult update = packages.Update(session, router.PackageManager, actualFeeds, snapshot.AdditionalFeeds, report);
                     result.Updates.Add(update);
                     if (update.Success)
                     { result.Status = SoftwareEnvironmentStatus.Ready; result.Message = "✓ 软件环境已就绪；已保留新的健康源。"; mutationMayHaveOccurred = false; return result; }
-                    if (PackageManagerService.IsNonSourceFailure(update) || (update.AdditionalRepositoryFailure && !update.OfficialRepositoryFailure))
+                    if (!update.OfficialRepositoryFailure || PackageManagerService.IsNonSourceFailure(update))
                     { logOnly("真实 update 表明继续换官方源无法解决此错误，结束尝试并恢复原配置。"); break; }
                     logOnly("候选 FULL，但真实 package update 失败，尝试下一个 FULL 候选。");
                 }

@@ -8,11 +8,13 @@ using iStoreOS.PluginHelper.Models;
 
 namespace iStoreOS.PluginHelper.Services
 {
-    internal sealed class SshPluginInstallSession : IPluginInstallSession
+    internal sealed class SshPluginInstallSession : IPluginInstallSession, IInstallerMonitoringSession
     {
         private readonly SshClient ssh;
         private readonly Func<SftpClient> createTransfer;
         private readonly Func<string, string> redact;
+        private PersistentInstallerMonitor monitor;
+        private string monitorDirectory;
         public SshPluginInstallSession(SshClient ssh, Func<SftpClient> createTransfer, Func<string, string> redact)
         { this.ssh = ssh; this.createTransfer = createTransfer; this.redact = redact; }
         public string Sanitize(string text) { return redact(text ?? ""); }
@@ -54,32 +56,46 @@ namespace iStoreOS.PluginHelper.Services
         public ProbeResult RemoteHash(RemoteTempSession s) { return Execute(PluginInstallCommands.Hash(s), 120); }
         public ProbeResult Inspect(RemoteTempSession s, bool check) { return Execute(PluginInstallCommands.Inspect(s, check), check ? 180 : 30); }
         public PackageSnapshot Snapshot(PackageManagerKind manager)
-        { return PackageSnapshotService.Parse(Require(Execute(PluginInstallCommands.Snapshot(manager), 30)).Output, manager); }
+        { return PackageSnapshotService.Parse(Require(Execute(PluginInstallCommands.Snapshot(manager), 30), "读取 " + manager + " 软件包快照").Output, manager); }
         public bool PackageExists(PackageManagerKind manager, string name)
         {
             ProbeResult result = Execute(PluginInstallCommands.Query(manager, name), 15);
             return PackageSnapshotService.QueryReportsInstalled(result, manager, name);
         }
-        public void CheckRunner() { Require(Execute("command -v nohup >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1 && command -v dd >/dev/null 2>&1", 10)); }
+        public void CheckRunner() { Require(Execute(PluginInstallCommands.RunnerCheck, 10), "后台安装 shell HUP 检查"); }
         public void StartInstaller(RemoteTempSession s) { Require(Execute(PluginInstallCommands.Launch(s), 15)); }
         public InstallerPoll PollInstaller(RemoteTempSession s, long stdoutOffset, long stderrOffset)
         {
-            string state = Require(Execute(PluginInstallCommands.ReadExit(s), 10)).Output.Trim();
-            int exit;
-            if (state != "RUNNING" && (!int.TryParse(state, NumberStyles.None, CultureInfo.InvariantCulture, out exit) || exit > 255))
-                throw new InvalidDataException("安装器结束状态不可读。");
-            return new InstallerPoll
+            if (monitor != null)
             {
-                ExitCode = state == "RUNNING" ? (int?)null : int.Parse(state, CultureInfo.InvariantCulture),
-                Stdout = Convert.FromBase64String(Require(Execute(PluginInstallCommands.ReadLog(s, false, stdoutOffset), 15)).Output.Trim()),
-                Stderr = Convert.FromBase64String(Require(Execute(PluginInstallCommands.ReadLog(s, true, stderrOffset), 15)).Output.Trim())
-            };
+                if (s.Directory != monitorDirectory) throw new InvalidOperationException("监测 session 不匹配。");
+                return monitor.Poll(stdoutOffset, stderrOffset);
+            }
+            using (OpenInstallerMonitor(s)) return monitor.Poll(stdoutOffset, stderrOffset);
+        }
+        public IDisposable OpenInstallerMonitor(RemoteTempSession s)
+        {
+            if (monitor != null) throw new InvalidOperationException("已有安装监测 scope。");
+            monitor = new PersistentInstallerMonitor(() => new TrustedFileSession(createTransfer()), s); monitorDirectory = s.Directory;
+            return InstallerMonitoring.ReleaseOnDispose(monitor, () => { monitor = null; monitorDirectory = null; });
+        }
+        private sealed class TrustedFileSession : IConnectedInstallerFileSession
+        {
+            private readonly SftpClient client;
+            private readonly IDisposable settings;
+            public TrustedFileSession(SftpClient client) { this.client = client; settings = client.ConnectionInfo as IDisposable; }
+            public void Connect() { client.OperationTimeout = TimeSpan.FromSeconds(15); client.Connect(); }
+            public bool IsConnected { get { return client.IsConnected; } }
+            public bool Exists(string path) { return client.Exists(path); }
+            public Stream OpenRead(string path)
+            { try { return client.OpenRead(path); } catch (SftpPathNotFoundException ex) { throw new FileNotFoundException("SFTP 文件不存在。", path, ex); } }
+            public void Dispose() { try { client.Dispose(); } finally { if (settings != null) settings.Dispose(); } }
         }
         public bool Cleanup(RemoteTempSession s)
         { return Execute(s.CleanupCommand(), 20).ExitStatus == 0 && Execute(PluginInstallCommands.Exists(s), 10).ExitStatus == 0; }
-        private static ProbeResult Require(ProbeResult result)
+        private static ProbeResult Require(ProbeResult result, string operation = "远程操作")
         {
-            if (result.ExitStatus != 0) throw new IOException("远程操作失败（exit " + result.ExitStatus + "）：" + result.Error);
+            if (result.ExitStatus != 0) throw new IOException(operation + "失败（exit " + result.ExitStatus + "）：" + result.Error);
             return result;
         }
         private ProbeResult Execute(string text, int seconds)

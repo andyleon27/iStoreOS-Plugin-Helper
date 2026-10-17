@@ -28,7 +28,11 @@ namespace iStoreOS.PluginHelper.Services
         public const string PersistentSpace = "LC_ALL=C df -Pk /; if test -d /overlay; then LC_ALL=C df -Pk /overlay; fi";
         public const string PersistentMounts = "cat /proc/mounts";
         public const string PendingRunners = "for d in /tmp/istore-plugin-helper/*; do test -d \"$d\" && test ! -L \"$d\" || continue; b=${d##*/}; test ${#b} -eq 32 || continue; case \"$b\" in *[!a-f0-9]*) continue;; esac; if test -d \"$d/launch.once\" && test ! -f \"$d/exit.code\"; then printf 'BUSY_INSTALLER:%s\\n' \"$d\"; exit 0; fi; done; ";
-        public const string Busy = PendingRunners + "for p in /proc/[0-9]*/comm; do test -r \"$p\" || continue; read -r n < \"$p\"; case \"$n\" in apk|opkg) printf 'BUSY\\n'; exit 0;; esac; done; for f in /lib/apk/db/lock /var/lock/opkg.lock; do test -f \"$f\" || continue; i=$(stat -c %i \"$f\") || exit 2; if awk -v i=\"$i\" '$6 ~ (\":\" i \"$\") { found=1 } END { exit !found }' /proc/locks; then printf 'BUSY\\n'; exit 0; fi; done; printf 'IDLE\\n'";
+        public const string Busy = PendingRunners + "for p in /proc/[0-9]*/comm; do test -r \"$p\" || continue; read -r n < \"$p\"; case \"$n\" in apk|opkg) printf 'BUSY\\n'; exit 0;; esac; done; " +
+            "for f in /lib/apk/db/lock /var/lock/opkg.lock; do test -f \"$f\" || continue; i=$(LC_ALL=C ls -di \"$f\") || exit 2; " +
+            "i=$(printf '%s\\n' \"$i\" | awk 'NR==1 {print $1}') || exit 2; case \"$i\" in ''|*[!0-9]*) exit 2;; esac; test -r /proc/locks || exit 2; " +
+            "awk -v i=\"$i\" '$6 ~ (\":\" i \"$\") { found=1 } END { exit !found }' /proc/locks; locked=$?; " +
+            "case \"$locked\" in 0) printf 'BUSY\\n'; exit 0;; 1) ;; *) exit 2;; esac; done; printf 'IDLE\\n'";
         public static bool HasRoute(string output) { return Regex.IsMatch(output ?? "", @"(?m)^default\s+(?!.*\blo\b).+"); }
         public static bool IsReadOnly(string mounts)
         { return Regex.IsMatch(mounts ?? "", @"(?m)^\S+\s+/(?:overlay)?\s+\S+\s+(?:[^\s,]+,)*ro(?:,|\s)"); }

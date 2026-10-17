@@ -1,4 +1,4 @@
-# Third-party notices — 1.0.1
+# Third-party notices — 1.0.2
 
 本表根据 `src/iStoreOS.PluginHelper/packages.config`、`build/Common.props` 的真实运行时引用和已还原 NuGet 包内的 `.nuspec` / 许可证文件整理。没有升级或移除依赖。包版本与程序集版本可能不同，现有 `App.config` 保留必要 binding redirects。
 

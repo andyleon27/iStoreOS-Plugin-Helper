@@ -15,10 +15,18 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="ArchitectureCompatibilityTests.cs" />
+    <Compile Include="RuntimeCompatibilityHotfixTests.cs" />
+    <Compile Include="RunnerCompatibilityTests.cs" />
+    <Compile Include="SftpPollTests.cs" />
+    <Compile Include="RunnerSmoke.cs" />
     <Compile Include="SoftwareTests.cs" />
     <Compile Include="InstallationTests.cs" />
     <Compile Include="UiTests.cs" />
     <Compile Include="WorkflowTests.cs" />
+    <Compile Include="WorkflowSourceTests.cs" />
+    <Compile Include="WorkflowPerformanceTests.cs" />
+    <Compile Include="PersistentPollTests.cs" />
+    <Compile Include="SnapshotLoggingTests.cs" />
     <Compile Include="CompactUiTests.cs" />
     <Compile Include="RoundedUiTests.cs" />
     <Compile Include="AdvancedUiTests.cs" />

@@ -19,22 +19,35 @@ namespace iStoreOS.PluginHelper.Services
                 RepositoryFeed feed = feeds[i];
                 string step = "正在检查" + label + " " + (i + 1) + "/" + feeds.Count + "…";
                 report(step, null);
+                RepositoryProbeResult result = ProbeOne(session, feed);
+                health.Probes.Add(result);
+                Report(result, report, step);
+            }
+            return health;
+        }
+        public RepositoryProbeResult ProbeOne(ISoftwareSourceSession session, RepositoryFeed feed)
+        { return ProbeOne(session, feed, false); }
+        public RepositoryProbeResult ProbeOne(ISoftwareSourceSession session, RepositoryFeed feed, bool fast)
+        {
                 RepositoryProbeResult result;
                 var watch = Stopwatch.StartNew();
                 if (feed.ParseError != null) result = new RepositoryProbeResult { Feed = feed, ExitCode = -1, ErrorCategory = SoftwareErrorCategory.RepoIndex, ErrorMessage = feed.ParseError };
                 else
                 {
-                    try { result = Parse(session.ProbeIndex(feed.IndexUrl), feed); }
+                    try { var fastSession = session as IFastRepositoryProbeSession;
+                        result = Parse(fast && fastSession != null ? fastSession.ProbeIndexFast(feed.IndexUrl) : session.ProbeIndex(feed.IndexUrl), feed); }
                     catch (Exception exception) { result = new RepositoryProbeResult { Feed = feed, ExitCode = -1, ErrorCategory = SoftwareErrorCategory.Transport, ErrorMessage = session.Sanitize(exception.Message) }; }
                 }
                 if (result.ResponseMilliseconds <= 0) result.ResponseMilliseconds = watch.Elapsed.TotalMilliseconds;
-                health.Probes.Add(result);
+                return result;
+        }
+        internal static void Report(RepositoryProbeResult result, Action<string, string> report, string step)
+        {
+                RepositoryFeed feed = result.Feed;
                 string kind = feed.Kind == RepositoryKind.FixedAuxiliary ? "固定辅助源" : feed.Kind == RepositoryKind.Custom ? "自定义源" : "官方源";
                 report(step, kind + " " + feed.ConfigPath + " | " + (feed.IndexUrl ?? feed.Name) + " | " + (result.Success ? "成功" : "失败") +
                     " | HTTP " + result.HttpStatus + " | exit " + result.ExitCode + " | " + result.ResponseMilliseconds.ToString("F0") + " ms" +
                     (result.Success ? "" : " | " + result.ErrorCategory + ": " + result.ErrorMessage));
-            }
-            return health;
         }
         public static RepositoryProbeResult Parse(ProbeResult response, RepositoryFeed feed)
         {

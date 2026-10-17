@@ -20,6 +20,9 @@ namespace iStoreOS.PluginHelper.Services
             Func<Task<SoftwareEnvironmentResult>> preflight, Func<InstallConfirmation, Task<bool>> confirm, IProgress<InstallProgress> progress, CancellationToken token)
         {
             var result = new PluginInstallResult(); RemoteTempSession remote = null;
+            var timingSession = session as IInstallationTimingSession;
+            var timing = timingSession == null ? new InstallationTiming() : timingSession.Timing;
+            IDisposable uploadTiming = null;
             bool directoryAttempted = false;
             Action<string, string> report = (step, log) => { if (progress != null) progress.Report(new InstallProgress { Step = step, Log = log == null ? null : session.Sanitize(log), InstallerStarted = result.InstallerStarted }); };
             Action<string> warning = text => { result.Warnings.Add(text); report("提示", "Warning：" + text); };
@@ -44,6 +47,7 @@ namespace iStoreOS.PluginHelper.Services
                     if (result.SoftwareEnvironment == null || result.SoftwareEnvironment.Status != SoftwareEnvironmentStatus.Ready)
                     { result.Message = "软件环境未就绪，插件未安装。"; return result; }
                     token.ThrowIfCancellationRequested();
+                    uploadTiming = timing.Measure("UploadIntegrity");
                     CheckSpace(session, checked(source.Length + PluginPackageInspection.SafetyMargin), report);
                     remote = RemoteTempSession.Create(); result.RemoteDirectory = remote.Directory;
                     session.CreateDirectory(remote); directoryAttempted = true;
@@ -89,8 +93,13 @@ namespace iStoreOS.PluginHelper.Services
                     ProbeResult check = session.Inspect(remote, true); LogCommand(report, "Makeself --check", check);
                     if (!PluginPackageInspection.IntegrityPassed(check)) throw new InvalidDataException("安装包完整性验证失败，禁止安装。");
                     result.Status = InstallStatus.FailedPrecheck;
-                    token.ThrowIfCancellationRequested(); session.CheckRunner();
-                    PackageSnapshot preview = session.Snapshot(router.PackageManager);
+                    token.ThrowIfCancellationRequested();
+                    report("4/7 安装准备", "检查 shell 内建 HUP trap；日志和结束状态通过受信任 SFTP 直接读取。");
+                    session.CheckRunner();
+                    report("4/7 安装准备", "✓ 后台启动能力检查通过；读取 " + router.PackageManager + " 软件包快照。");
+                    uploadTiming.Dispose(); uploadTiming = null;
+                    PackageSnapshot preview;
+                    using (timing.Measure("SnapshotBefore")) preview = session.Snapshot(router.PackageManager);
                     string known = PluginVerificationService.KnownMainPackage(result.Plugin), existingVersion = null;
                     bool exists = known != null && preview.Packages.TryGetValue(known, out existingVersion) && session.PackageExists(router.PackageManager, known);
                     if (exists) report("等待安装确认", "检测到 " + result.Plugin.PluginName + " 已经安装：" + known + " " + existingVersion + "；需要明确确认继续安装 / 更新。");
@@ -99,7 +108,7 @@ namespace iStoreOS.PluginHelper.Services
                     { result.Status = exists ? InstallStatus.AlreadyInstalled : InstallStatus.Cancelled; result.Message = exists ? "已保留现有插件，未执行安装。" : "已取消安装。"; return result; }
                     token.ThrowIfCancellationRequested();
                     // Snapshot immediately before launch, after the potentially lengthy user dialog.
-                    result.BeforePackages = session.Snapshot(router.PackageManager);
+                    using (timing.Measure("SnapshotBefore")) result.BeforePackages = session.Snapshot(router.PackageManager);
                     if (!exists && known != null && result.BeforePackages.Packages.ContainsKey(known))
                         throw new InvalidOperationException("确认期间主插件已被其他操作安装，请重新检查后确认。");
                     LogSnapshot(report, "BeforePackages", result.BeforePackages);
@@ -108,6 +117,7 @@ namespace iStoreOS.PluginHelper.Services
                     // Mark before dispatch: a lost acknowledgement must never cause a retry or cleanup.
                     result.InstallerStarted = true;
                     report("5/7 正在安装", "安装正在进行，请勿关闭程序或断开路由器电源。执行作者原始 sh package.run；不会自动重试。");
+                    using (timing.Measure("InstallerRuntime"))
                     try
                     {
                         session.StartInstaller(remote);
@@ -116,6 +126,7 @@ namespace iStoreOS.PluginHelper.Services
                     catch (Exception exception)
                     { warning("安装状态未知：" + session.Sanitize(exception.Message) + "；未重试、未强杀安装器。"); }
                     report("6/7 独立验证", "读取 AfterPackages 并独立查询目标主 package。");
+                    using (timing.Measure("SnapshotAfterVerify"))
                     try
                     {
                         result.AfterPackages = session.Snapshot(router.PackageManager);
@@ -145,6 +156,9 @@ namespace iStoreOS.PluginHelper.Services
             { result.Message = "✗ " + session.Sanitize(exception.Message); report("操作停止", result.Message); }
             finally
             {
+                if (uploadTiming != null) uploadTiming.Dispose();
+                using (timing.Measure("RestoreCleanup"))
+                {
                 if (directoryAttempted && remote != null)
                 {
                     if (result.InstallerStarted && !result.InstallerEnded)
@@ -166,6 +180,8 @@ namespace iStoreOS.PluginHelper.Services
                     }
                 }
                 report("完成", "最终状态=" + result.Status + "；" + result.Message + "；installer exit=" + result.InstallerExitCode + "；临时文件=" + (result.CleanupSucceeded ? "已清理" : remote == null ? "未创建" : "未确认清理"));
+                }
+                if (timingSession == null) report("Timing", timing.Summary());
             }
             return result;
         }
@@ -174,11 +190,14 @@ namespace iStoreOS.PluginHelper.Services
             long stdout = 0, stderr = 0; var timer = Stopwatch.StartNew(); TimeSpan lastActivity = TimeSpan.Zero;
             Decoder outDecoder = Encoding.UTF8.GetDecoder(), errDecoder = Encoding.UTF8.GetDecoder();
             var outPending = new StringBuilder(); var errPending = new StringBuilder();
+            using (var monitoring = InstallerMonitoring.Open(session, remote))
+            {
             try
             {
             while (true)
             {
                 InstallerPoll poll = session.PollInstaller(remote, stdout, stderr);
+                if (!string.IsNullOrEmpty(poll.Diagnostic)) report("5/7 正在安装", poll.Diagnostic);
                 if (poll.Stdout.Length > 0 || poll.Stderr.Length > 0) lastActivity = timer.Elapsed;
                 Emit(report, "stdout", outDecoder, outPending, poll.Stdout, false); Emit(report, "stderr", errDecoder, errPending, poll.Stderr, false);
                 stdout += poll.Stdout.Length; stderr += poll.Stderr.Length;
@@ -197,6 +216,9 @@ namespace iStoreOS.PluginHelper.Services
             {
                 Emit(report, "stdout", outDecoder, outPending, new byte[0], true);
                 Emit(report, "stderr", errDecoder, errPending, new byte[0], true);
+                var statistics = monitoring as IInstallerMonitorStatistics;
+                if (statistics != null) report("5/7 正在安装", "Installer monitoring SFTP connection count = " + statistics.ConnectionCount);
+            }
             }
         }
         private static void Emit(Action<string, string> report, string channel, Decoder decoder, StringBuilder pending, byte[] data, bool flush)
@@ -221,13 +243,11 @@ namespace iStoreOS.PluginHelper.Services
         }
         private static void LogCommand(Action<string, string> report, string name, ProbeResult result)
         { report("4/7 Makeself", name + " stdout：\n" + result.Output + "\nstderr：\n" + result.Error + "\nexit=" + result.ExitStatus); }
-        private static void LogSnapshot(Action<string, string> report, string name, PackageSnapshot snapshot)
+        internal static void LogSnapshot(Action<string, string> report, string name, PackageSnapshot snapshot)
         {
-            var text = new StringBuilder(name + "（" + snapshot.Packages.Count + "）\n");
-            foreach (var package in snapshot.Packages) text.AppendLine(package.Key + " = " + package.Value);
-            report("Package Snapshot", text.ToString());
+            report("Package Snapshot", name + ": " + snapshot.Packages.Count + " packages（完整快照保留在内存）");
         }
-        private static void LogDiff(Action<string, string> report, PackageDiff diff)
+        internal static void LogDiff(Action<string, string> report, PackageDiff diff)
         {
             var text = new StringBuilder("Package Diff：新增 " + diff.Added.Count + "；升级 / 版本变化 " + diff.Updated.Count + "；删除 " + diff.Removed.Count + "\n");
             foreach (var p in diff.Added) text.AppendLine("Added " + p.Name + " " + p.AfterVersion);

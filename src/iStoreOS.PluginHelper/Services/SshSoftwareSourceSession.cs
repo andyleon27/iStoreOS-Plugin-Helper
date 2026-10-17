@@ -6,7 +6,7 @@ using iStoreOS.PluginHelper.Models;
 
 namespace iStoreOS.PluginHelper.Services
 {
-    internal sealed class SshSoftwareSourceSession : ISoftwareSourceSession
+    internal sealed class SshSoftwareSourceSession : ISoftwareSourceSession, IFastRepositoryProbeSession
     {
         private readonly SshClient ssh;
         private readonly Func<string, string> sanitize;
@@ -32,6 +32,7 @@ namespace iStoreOS.PluginHelper.Services
         { return Execute(ReadOnlyRouterCommands.Get(list ? RouterProbe.QuickStartSources : RouterProbe.QuickStartCurrentSource), 8); }
         public ProbeResult QuickStartSwitch(string identity) { return Execute(SoftwareSourceCommands.QuickStartSwitch(identity), 25); }
         public ProbeResult ProbeIndex(string url) { return Execute(SoftwareSourceCommands.ProbeIndex(url), 20); }
+        public ProbeResult ProbeIndexFast(string url) { return Execute(SoftwareSourceCommands.ProbeIndexFast(url), 5); }
         public PackageUpdateResult Update(PackageManagerKind manager)
         {
             using (SshCommand command = ssh.CreateCommand(SoftwareSourceCommands.Update(manager)))

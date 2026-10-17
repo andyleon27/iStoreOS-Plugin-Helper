@@ -29,7 +29,7 @@ namespace iStoreOS.PluginHelper.Services
         { BusyInterval = TimeSpan.FromSeconds(2); BusyChecks = 7; ReconnectInterval = TimeSpan.FromSeconds(2); ReconnectAttempts = 3; Engine = new PluginInstallationService(); }
 
         private sealed class Candidate
-        { public string Key; public SoftwareSourceInfo Source; public string Text; public List<RepositoryFeed> Feeds; }
+        { public string Key; public SoftwareSourceInfo Source; public string Text; public List<RepositoryFeed> Feeds; public RepositoryHealthResult Health; }
         private sealed class Context
         {
             public IInstallationWorkflowSession Session;
@@ -45,6 +45,7 @@ namespace iStoreOS.PluginHelper.Services
             public InstallationWorkflowResult Result;
             public CancellationToken Token;
             public InstallationState State;
+            public InstallationTiming Timing = new InstallationTiming();
             public void Report(InstallationState state, string log = null, InstallProgress transfer = null)
             {
                 State = state; Result.State = state;
@@ -60,6 +61,7 @@ namespace iStoreOS.PluginHelper.Services
             lock (this) { if (running) throw new InvalidOperationException("已有安装流程正在执行。"); running = true; }
             var result = new InstallationWorkflowResult();
             var context = new Context { Session = session, Router = expected, FilePath = filePath, Token = token, Progress = progress, Result = result };
+            IDisposable preflightTiming = context.Timing.Measure("Preflight / SourceSelect");
             try
             {
                 context.Report(InstallationState.Preflight, "新一轮安装：清空候选缓存，重新检查 SSH、环境、网络、时间、空间和包管理器。");
@@ -69,6 +71,7 @@ namespace iStoreOS.PluginHelper.Services
                 {
                     // A prior dispatch/restoration ambiguity belongs to the original device and file.
                     Context previous = unfinished;
+                    previous.Timing = context.Timing;
                     if (!SameRouter(previous.Router, context.Router)) throw new InstallationPolicyException(InstallationFailureKind.IdentityChanged, "不能在另一台设备处理上轮安装。");
                     previous.Session = session; previous.Progress = progress; previous.Token = CancellationToken.None; previous.Result = result;
                     result.Router = previous.Router; result.SourceChanged = previous.Mutated; result.OriginalHash = TextHash(previous.Original.OriginalText); result.BackupPath = previous.Backup;
@@ -87,7 +90,7 @@ namespace iStoreOS.PluginHelper.Services
                         // This deliberate retry is a new round, but only after the old runner ended and its source is restored.
                         await FinalizeContext(previous);
                         if (previous.Mutated && !result.SourceRestored) { SetFailure(context, InstallFailureClassifier.Failure(InstallationFailureKind.Tool, "旧流程原源尚未恢复。")); return result; }
-                        context = new Context { Session = session, Router = previous.Router, FilePath = filePath, Token = token, Progress = progress, Result = result };
+                        context = new Context { Session = session, Router = previous.Router, FilePath = filePath, Token = token, Progress = progress, Result = result, Timing = previous.Timing };
                         context.Report(InstallationState.Preflight, "旧安装器已结束且仅有官方下载错误；新一轮重新预检和探源。");
                         unfinished = null;
                     }
@@ -108,49 +111,21 @@ namespace iStoreOS.PluginHelper.Services
                     context.Original = new SoftwareSourceService().Read(sources, context.Router.PackageManager, log => context.Report(InstallationState.Preflight, log));
                     context.Original.CurrentSource = new QuickStartService().ReadCurrent(sources, log => context.Report(InstallationState.Preflight, log));
                     context.ExpectedText = context.Original.OriginalText; result.OriginalHash = TextHash(context.ExpectedText);
-                    var dynamicSources = new QuickStartService().ReadCandidates(sources, log => context.Report(InstallationState.Preflight, log));
                     if (context.Original.CurrentSource != null && !MatchesMirror(context.Original.CurrentSource, context.Original.OfficialFeeds))
                     { context.Report(InstallationState.Preflight, "QuickStart 当前 identity 与实际 distfeeds URL 不一致；不使用此 identity 去重或决定安装源，按真实配置探测。"); context.Original.CurrentSource = null; }
                     var readinessFeeds = context.Original.OfficialFeeds.Concat(context.Original.AdditionalFeeds).ToList();
-                    if (!string.IsNullOrEmpty(context.Original.RomText))
-                        foreach (var source in dynamicSources) readinessFeeds.AddRange(SoftwareSourceService.ParseFeeds(SoftwareSourceService.RebaseRom(context.Original.RomText, source.Url), context.Router.PackageManager, context.Original.DistfeedsPath, RepositoryKind.Official));
                     await CheckReadiness(context, readinessFeeds, lockedFile.Length);
                     await WaitForManager(context);
-                    context.Report(InstallationState.SourceProbe, "重新探测当前源及 QuickStart 动态候选；不使用硬编码镜像地址。");
+                    context.Report(InstallationState.SourceProbe, "当前官方源 Canary；仅在需要备用源时读取 QuickStart 动态候选。");
                     result.Software = new SoftwareEnvironmentResult { CurrentSource = context.Original.CurrentSource };
-                    var probes = new RepositoryProbeService();
+                    var round = new RepositoryProbeRound(context.Timing);
                     Action<string, string> probeLog = (step, log) => context.Report(InstallationState.SourceProbe, log);
-                    result.Software.OfficialHealth = probes.Probe(sources, context.Original.OfficialFeeds, probeLog, context.PreparationToken, "当前官方源");
-                    result.Software.AdditionalHealth = probes.Probe(sources, context.Original.AdditionalFeeds, probeLog, context.PreparationToken, "辅助 / 自定义源");
-                    var full = new List<Candidate>(); var configurations = new HashSet<string>(StringComparer.Ordinal); var mirrors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    if (result.Software.OfficialHealth.Status == RepositoryHealth.FULL)
-                    {
-                        var current = new Candidate { Key = "Current:" + TextHash(context.Original.OriginalText), Source = context.Original.CurrentSource, Text = context.Original.OriginalText, Feeds = context.Original.OfficialFeeds };
-                        full.Add(current); configurations.Add(FeedKey(current.Feeds));
-                        if (current.Source != null) mirrors.Add(current.Source.Url.TrimEnd('/'));
-                    }
-                    foreach (var source in dynamicSources.OrderBy(s => new Uri(s.Url).Scheme == "https" ? 0 : 1).ThenBy(s => s.Identity, StringComparer.Ordinal).ThenBy(s => s.Url, StringComparer.Ordinal))
-                    {
-                        context.PreparationToken.ThrowIfCancellationRequested();
-                        if (string.IsNullOrWhiteSpace(context.Original.RomText)) break;
-                        if (!mirrors.Add(source.Url.TrimEnd('/'))) continue;
-                        string text = SoftwareSourceService.RebaseRom(context.Original.RomText, source.Url);
-                        var feeds = SoftwareSourceService.ParseFeeds(text, context.Router.PackageManager, context.Original.DistfeedsPath, RepositoryKind.Official);
-                        string key = FeedKey(feeds); if (!configurations.Add(key)) continue;
-                        var health = probes.Probe(sources, feeds, probeLog, context.PreparationToken, "候选 " + source.Identity);
-                        result.Software.Candidates.Add(new SoftwareRepairPlan { OriginalSource = context.Original.CurrentSource, ProposedSource = source, Probe = health });
-                        if (health.Status == RepositoryHealth.FULL)
-                        {
-                            if (key == FeedKey(context.Original.OfficialFeeds))
-                            {
-                                // A transient probe may recover when the same actual indexes are tested again.
-                                // Keep the user's exact text (including comments), and prefer it without a POST.
-                                result.Software.OfficialHealth = health;
-                                full.Insert(0, new Candidate { Key = "Current:" + TextHash(context.Original.OriginalText), Source = context.Original.CurrentSource ?? source, Text = context.Original.OriginalText, Feeds = context.Original.OfficialFeeds });
-                            }
-                            else full.Add(new Candidate { Key = source.Identity + "|" + source.Url, Source = source, Text = text, Feeds = feeds });
-                        }
-                    }
+                    var canary = round.ProbeCanary(sources, context.Original.CurrentSource == null ? "" : context.Original.CurrentSource.Url,
+                        context.Original.OfficialFeeds, probeLog, context.PreparationToken, "当前官方源");
+                    result.Software.OfficialHealth = canary;
+                    preflightTiming.Dispose();
+                    context.Report(InstallationState.SourceProbe, "辅助 / 自定义源已记录并参与真实 package update；完整 HTTP 诊断可在高级软件环境检测中执行。");
+                    var available = AvailableSources(context, sources, round, canary, probeLog);
                     // Retry checks installed state only after fresh readiness and source probes.
                     if (failedFileHash == context.Hash && failedFingerprint == context.Router.HostKeyFingerprint)
                     {
@@ -158,16 +133,14 @@ namespace iStoreOS.PluginHelper.Services
                         var existing = VerifyExisting(context, plugin);
                         if (existing != null) { result.Installation = existing; MarkSuccess(context, "目标版本已独立验证，未重新执行 .run。"); return result; }
                     }
-                    if (full.Count == 0)
-                    { SetFailure(context, InstallFailureClassifier.Failure(InstallationFailureKind.MirrorsExhausted, "没有 FULL 官方源可供本轮安装。")); return result; }
-                    foreach (Candidate candidate in full)
+                    foreach (Candidate candidate in available)
                     {
                         context.PreparationToken.ThrowIfCancellationRequested();
                         await EnsureConnection(context, false); await WaitForManager(context);
                         if (candidate.Text != context.ExpectedText)
                         {
-                            await CheckReadiness(context, readinessFeeds, lockedFile.Length);
-                            try { await SelectSource(context, sources, candidate); }
+                            await CheckReadiness(context, candidate.Feeds.Concat(context.Original.AdditionalFeeds).ToList(), lockedFile.Length);
+                            try { using (context.Timing.Measure("Preflight / SourceSelect")) await SelectSource(context, sources, candidate); }
                             catch (InstallationPolicyException ex)
                             {
                                 if (ex.Kind != InstallationFailureKind.OfficialRepository) throw;
@@ -175,7 +148,8 @@ namespace iStoreOS.PluginHelper.Services
                             }
                         }
                         context.Report(InstallationState.SourceProbe, "本轮源=" + candidate.Key + "；运行真实 package update。");
-                        var update = new PackageManagerService().Update(sources, context.Router.PackageManager, candidate.Feeds, context.Original.AdditionalFeeds,
+                        PackageUpdateResult update;
+                        using (context.Timing.Measure("PackageUpdate")) update = new PackageManagerService().Update(sources, context.Router.PackageManager, candidate.Feeds, context.Original.AdditionalFeeds,
                             (step, log) => context.Report(InstallationState.SourceProbe, log));
                         result.Software.Updates.Add(update);
                         if (!update.Success)
@@ -225,17 +199,41 @@ namespace iStoreOS.PluginHelper.Services
             catch (Exception ex) { SetFailure(context, InstallFailureClassifier.Failure(session.IsConnected ? InstallationFailureKind.Tool : InstallationFailureKind.ConnectionLost, session.Sanitize(ex.ToString()))); }
             finally
             {
+                preflightTiming.Dispose();
                 InstallationState terminal = result.State;
-                try { FinalizeContext(context).GetAwaiter().GetResult(); }
+                try { using (context.Timing.Measure("RestoreCleanup")) FinalizeContext(context).GetAwaiter().GetResult(); }
                 catch (Exception ex) { result.Warnings.Add("收尾异常：" + session.Sanitize(ex.Message)); }
                 if (terminal == InstallationState.Success && result.Warnings.Count > 0 && result.Installation != null) result.Installation.Warnings.AddRange(result.Warnings);
                 context.Report(terminal, "本轮结束：" + terminal + "；尝试次数=" + result.Attempts.Count + "；源修改=" + result.SourceChanged + "；原源恢复=" + result.SourceRestored);
+                context.Report(terminal, context.Timing.Summary());
                 if (result.Failure != null && context.Hash != null) { failedFileWasDispatched = context.Dispatched || (failedFileWasDispatched && failedFileHash == context.Hash && failedFingerprint == context.Router.HostKeyFingerprint); failedFileHash = context.Hash; failedFingerprint = context.Router.HostKeyFingerprint; }
                 if (result.State == InstallationState.Success) { failedFileHash = null; failedFingerprint = null; failedFileWasDispatched = false; }
                 if (context.Original != null) unfinished = (context.Dispatched && !context.Finished) || (context.Mutated && !result.SourceRestored) ? context : null;
                 lock (this) running = false;
             }
             return result;
+        }
+        private static IEnumerable<Candidate> AvailableSources(Context c, ISoftwareSourceSession sources, RepositoryProbeRound round,
+            RepositoryHealthResult canary, Action<string, string> report)
+        {
+            if (canary.Probes.Count > 0 && canary.Probes[0].Success)
+                yield return new Candidate { Key = "Current:" + TextHash(c.Original.OriginalText), Source = c.Original.CurrentSource,
+                    Text = c.Original.OriginalText, Feeds = c.Original.OfficialFeeds, Health = canary };
+            var search = new OfficialSourceSearch(c.Original, c.Router.PackageManager, round);
+            using (var plans = search.Find(sources, () => new QuickStartService().ReadCandidates(sources,
+                log => c.Report(InstallationState.SourceProbe, log)), report, c.PreparationToken, c.Result.Software.Candidates).GetEnumerator())
+            {
+                while (true)
+                {
+                bool moved;
+                using (c.Timing.Measure("Preflight / SourceSelect")) moved = plans.MoveNext();
+                if (!moved) yield break;
+                var plan = plans.Current;
+                string text = SoftwareSourceService.RebaseRom(c.Original.RomText, plan.ProposedSource.Url);
+                yield return new Candidate { Key = plan.ProposedSource.Identity + "|" + plan.ProposedSource.Url, Source = plan.ProposedSource,
+                    Text = text, Feeds = SoftwareSourceService.ParseFeeds(text, c.Router.PackageManager, c.Original.DistfeedsPath, RepositoryKind.Official), Health = plan.Probe };
+                }
+            }
         }
         private async Task EnsureConnection(Context c, bool force)
         {
@@ -301,10 +299,8 @@ namespace iStoreOS.PluginHelper.Services
                 throw new InstallationPolicyException(InstallationFailureKind.Tool, "临时换源未通过实际 identity / 完整索引路径验证。");
             c.ExpectedText = current.Output; c.Result.Software.SourceSwitchOccurred = current.Output != c.Original.OriginalText;
             c.Result.Software.CurrentSource = identity;
-            var health = new RepositoryProbeService().Probe(sources, SoftwareSourceService.ParseFeeds(current.Output, c.Router.PackageManager, c.Original.DistfeedsPath, RepositoryKind.Official),
-                (step, log) => c.Report(InstallationState.SourceProbe, log), c.PreparationToken, "切换后实际官方源");
-            c.Result.Software.OfficialHealth = health;
-            if (health.Status != RepositoryHealth.FULL) throw new InstallationPolicyException(InstallationFailureKind.OfficialRepository, "切换后的真实配置不再 FULL，停止本轮并恢复原文。");
+            // Identity and complete feed equality above bind the cached FULL result to the actual configuration.
+            c.Result.Software.OfficialHealth = candidate.Health;
             c.Report(InstallationState.SourceProbe, "临时源已实际复核；POST acknowledgement=" + acknowledged);
         }
         private async Task FinalizeContext(Context c)
@@ -364,9 +360,14 @@ namespace iStoreOS.PluginHelper.Services
             var watch = Stopwatch.StartNew(); long stdout = 0, stderr = 0;
             var outText = new StringBuilder(); var errText = new StringBuilder();
             var outDecoder = Encoding.UTF8.GetDecoder(); var errDecoder = Encoding.UTF8.GetDecoder();
+            var installer = c.Session.Installer;
+            using (c.Timing.Measure("InstallerRuntime"))
+            using (InstallerMonitoring.Open(installer, c.Active))
+            {
             while (watch.Elapsed <= Engine.OverallLimit)
             {
-                var poll = Read(c, () => c.Session.Installer.PollInstaller(c.Active, stdout, stderr));
+                var poll = Read(c, () => installer.PollInstaller(c.Active, stdout, stderr));
+                if (!string.IsNullOrEmpty(poll.Diagnostic)) c.Report(InstallationState.ReconnectChecking, poll.Diagnostic);
                 char[] outChars = new char[poll.Stdout.Length + 4], errChars = new char[poll.Stderr.Length + 4];
                 outText.Append(outChars, 0, outDecoder.GetChars(poll.Stdout, 0, poll.Stdout.Length, outChars, 0));
                 errText.Append(errChars, 0, errDecoder.GetChars(poll.Stderr, 0, poll.Stderr.Length, errChars, 0));
@@ -375,17 +376,24 @@ namespace iStoreOS.PluginHelper.Services
                 { c.ActiveResult.InstallerEnded = true; c.ActiveResult.InstallerExitCode = poll.ExitCode; c.Finished = true; break; }
                 await Task.Delay(Engine.PollInterval);
             }
+            }
             if (outText.Length > 0) c.Report(InstallationState.ReconnectChecking, "旧安装器完整 stdout：\n" + outText);
             if (errText.Length > 0) c.Report(InstallationState.ReconnectChecking, "旧安装器完整 stderr：\n" + errText);
             c.ReconciledLog = outText + "\n" + errText;
             if (!c.Finished) return;
+            using (c.Timing.Measure("SnapshotAfterVerify"))
+            {
             await WaitForManager(c); c.Report(InstallationState.Verifying, "旧安装器已结束，读取新快照并独立验证。");
             var after = c.Session.Installer.Snapshot(c.Router.PackageManager);
             c.ActiveResult.AfterPackages = after;
+            Action<string, string> verificationLog = (step, log) => c.Report(InstallationState.Verifying, log);
+            PluginInstallationService.LogSnapshot(verificationLog, "AfterPackages", after);
             c.ActiveResult.Diff = PackageSnapshotService.Compare(c.ActiveResult.BeforePackages, after);
+            PluginInstallationService.LogDiff(verificationLog, c.ActiveResult.Diff);
             c.ActiveResult.Verification = new PluginVerificationService().Verify(c.ActiveResult.Plugin, after, c.ActiveResult.Diff, name => c.Session.Installer.PackageExists(c.Router.PackageManager, name));
             if (c.ActiveResult.BeforePackages.Packages.ContainsKey("luci-app-openclash") && !c.Session.Installer.PackageExists(c.Router.PackageManager, "luci-app-openclash")) c.ActiveResult.Verification.Verified = false;
             c.ActiveResult.Status = c.ActiveResult.InstallerExitCode == 0 && c.ActiveResult.Verification.Verified ? InstallStatus.SuccessVerified : InstallStatus.FailedVerification;
+            }
         }
         private static PluginInstallResult VerifyExisting(Context c, PluginPackageInfo plugin)
         {
@@ -414,7 +422,6 @@ namespace iStoreOS.PluginHelper.Services
         { c.Result.Failure = failure; c.Report(failure.Kind == InstallationFailureKind.Tool ? InstallationState.ToolFailure : failure.CanRetry ? InstallationState.RetryableFailure : InstallationState.ActionRequiredFailure, "失败分类：" + failure.Kind + "；" + failure.Evidence + "；" + failure.UserMessage); }
         private static void MarkSuccess(Context c, string log)
         { c.Report(InstallationState.Verifying, log); c.Result.State = InstallationState.Success; }
-        private static string FeedKey(IList<RepositoryFeed> feeds) { return string.Join("\n", feeds.Select(f => f.IndexUrl ?? f.ParseError).OrderBy(s => s, StringComparer.Ordinal)); }
         private static bool MatchesMirror(SoftwareSourceInfo source, IList<RepositoryFeed> feeds)
         {
             Uri mirror; if (source == null || !Uri.TryCreate(source.Url, UriKind.Absolute, out mirror) || feeds.Count == 0) return false;
@@ -440,10 +447,19 @@ namespace iStoreOS.PluginHelper.Services
             }
         }
 
-        private sealed class WorkflowInstaller : IPluginInstallSession
+        private sealed class WorkflowInstaller : IPluginInstallSession, IInstallerMonitoringSession, IInstallationTimingSession
         {
             private readonly InstallationWorkflowService owner; private readonly Context c; private readonly bool retry;
             private string uploadedHash; private long uploadedBytes;
+            private IPluginInstallSession monitoringInstaller;
+            public InstallationTiming Timing { get { return c.Timing; } }
+            public IDisposable OpenInstallerMonitor(RemoteTempSession s)
+            {
+                if (monitoringInstaller != null) throw new InvalidOperationException("已有安装监测 scope。");
+                monitoringInstaller = c.Session.Installer;
+                try { return InstallerMonitoring.ReleaseOnDispose(InstallerMonitoring.Open(monitoringInstaller, s), () => monitoringInstaller = null); }
+                catch { monitoringInstaller = null; throw; }
+            }
             public InstallationFailure PolicyFailure;
             public bool DidDispatch;
             public WorkflowInstaller(InstallationWorkflowService owner, Context c, IList<RepositoryFeed> feeds, bool retry)
@@ -498,10 +514,10 @@ namespace iStoreOS.PluginHelper.Services
                 }
             }
             public InstallerPoll PollInstaller(RemoteTempSession s, long stdoutOffset, long stderrOffset)
-            { return owner.Read(c, () => c.Session.Installer.PollInstaller(s, stdoutOffset, stderrOffset)); }
+            { return owner.Read(c, () => (monitoringInstaller ?? c.Session.Installer).PollInstaller(s, stdoutOffset, stderrOffset)); }
             public bool Cleanup(RemoteTempSession s) { return true; } // Outer layer owns the real, ordered cleanup.
         }
-        private sealed class RecoveringSources : ISoftwareSourceSession
+        private sealed class RecoveringSources : ISoftwareSourceSession, IFastRepositoryProbeSession
         {
             private readonly InstallationWorkflowService owner; private readonly Context c;
             public RecoveringSources(InstallationWorkflowService owner, Context c) { this.owner = owner; this.c = c; }
@@ -511,6 +527,8 @@ namespace iStoreOS.PluginHelper.Services
             public ProbeResult QuickStartGet(bool list) { return owner.Read(c, () => c.Session.Sources.QuickStartGet(list)); }
             public ProbeResult QuickStartSwitch(string identity) { return c.Session.Sources.QuickStartSwitch(identity); }
             public ProbeResult ProbeIndex(string url) { return owner.Read(c, () => c.Session.Sources.ProbeIndex(url)); }
+            public ProbeResult ProbeIndexFast(string url) { return owner.Read(c, () => { var fast = c.Session.Sources as IFastRepositoryProbeSession;
+                return fast == null ? c.Session.Sources.ProbeIndex(url) : fast.ProbeIndexFast(url); }); }
             public PackageUpdateResult Update(PackageManagerKind manager) { return c.Session.Sources.Update(manager); }
             public string BackupOfficial(PackageManagerKind manager) { return c.Session.Sources.BackupOfficial(manager); }
             public ProbeResult ReadBackup(string path) { return owner.Read(c, () => c.Session.Sources.ReadBackup(path)); }

@@ -28,11 +28,12 @@ namespace iStoreOS.PluginHelper.Services
         }
         public string CreateCommand()
         {
-            // Refuse symlink roots and existing sessions; never take ownership of another directory.
-            return "umask 077; test ! -L " + ShellArgument.Quote(Root) + " && { test -d " + ShellArgument.Quote(Root) +
+            // Refuse symlinks and session reuse; enforce private modes with BusyBox basics.
+            return "umask 077 && test ! -L " + ShellArgument.Quote(Root) + " && { test -d " + ShellArgument.Quote(Root) +
                 " || mkdir -- " + ShellArgument.Quote(Root) + "; } && test ! -L " + ShellArgument.Quote(Root) +
-                " && test \"$(stat -c %u " + ShellArgument.Quote(Root) + ")\" = \"$(id -u)\" && test \"$(stat -c %a " + ShellArgument.Quote(Root) + ")\" = 700" +
-                " && mkdir -- " + ShellArgument.Quote(Directory);
+                " && chmod 700 " + ShellArgument.Quote(Root) + " && test ! -e " + ShellArgument.Quote(Directory) +
+                " && test ! -L " + ShellArgument.Quote(Directory) + " && mkdir -- " + ShellArgument.Quote(Directory) +
+                " && chmod 700 " + ShellArgument.Quote(Directory);
         }
         public string CleanupCommand()
         {
@@ -43,6 +44,7 @@ namespace iStoreOS.PluginHelper.Services
     }
     public static class PluginInstallCommands
     {
+        public const string RunnerCheck = "if ! (trap '' HUP); then printf 'Cannot ignore SIGHUP with shell trap\\n' >&2; exit 1; fi; printf 'ISTORE_RUNNER_READY\\n'";
         public const string TmpSpace = "LC_ALL=C df -Pk /tmp";
         public static string FileSize(RemoteTempSession s) { return "wc -c < " + s.File("package.run"); }
         public static string Hash(RemoteTempSession s)
@@ -66,24 +68,14 @@ namespace iStoreOS.PluginHelper.Services
         { if (name == null || !Regex.IsMatch(name, @"\A[a-zA-Z0-9][a-zA-Z0-9+_.-]*\z")) throw new ArgumentException("Invalid package name."); }
         public static string Launch(RemoteTempSession s)
         {
-            // A detached runner survives a lost SSH channel. Its atomic exit marker is the only
-            // proof allowing cleanup after launch. No kill, timeout or automatic second execution.
+            // Ignore HUP before the background fork; child shells inherit it without nohup.
+            // The atomic exit marker is the only proof allowing cleanup after launch.
             string runner = "cd " + ShellArgument.Quote(s.Directory) + " || exit 125; " +
                 "LC_ALL=C TMPDIR=" + ShellArgument.Quote(s.Directory) + " sh " + s.File("package.run") + " > " + s.File("stdout.log") + " 2> " + s.File("stderr.log") +
                 "; rc=$?; printf '%s\\n' \"$rc\" > exit.tmp && mv -- exit.tmp exit.code";
-            return "command -v nohup >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1 && " +
-                "test ! -L " + ShellArgument.Quote(RemoteTempSession.Root) + " && test ! -L " + ShellArgument.Quote(s.Directory) +
-                " && mkdir -- " + s.File("launch.once") + " && { nohup sh -c " + ShellArgument.Quote(runner) +
+            return "trap '' HUP && test ! -L " + ShellArgument.Quote(RemoteTempSession.Root) + " && test ! -L " + ShellArgument.Quote(s.Directory) +
+                " && mkdir -- " + s.File("launch.once") + " && { sh -c " + ShellArgument.Quote(runner) +
                 " </dev/null >/dev/null 2>&1 & }";
-        }
-        public static string ReadExit(RemoteTempSession s)
-        { return "if test -f " + s.File("exit.code") + "; then cat -- " + s.File("exit.code") + "; else printf 'RUNNING'; fi"; }
-        public static string ReadLog(RemoteTempSession s, bool stderr, long offset)
-        {
-            if (offset < 0) throw new ArgumentException("Invalid log offset.");
-            return "if test -f " + s.File(stderr ? "stderr.log" : "stdout.log") + "; then dd if=" +
-                s.File(stderr ? "stderr.log" : "stdout.log") + " bs=1 skip=" + offset.ToString(System.Globalization.CultureInfo.InvariantCulture) +
-                " count=65536 2>/dev/null | base64; fi";
         }
         public static string Exists(RemoteTempSession s)
         { return "if test -e " + ShellArgument.Quote(s.Directory) + " || test -L " + ShellArgument.Quote(s.Directory) + "; then exit 1; fi"; }

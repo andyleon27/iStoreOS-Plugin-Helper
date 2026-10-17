@@ -19,13 +19,13 @@ namespace iStoreOS.PluginHelper.Tests
                 {
                     Equal(new Size(760, 500), form.ClientSize); Equal(FormBorderStyle.FixedSingle, form.FormBorderStyle);
                     Equal(false, form.MaximizeBox); Equal(true, form.MinimizeBox); Equal(AutoScaleMode.Dpi, form.AutoScaleMode);
-                    Equal("V1.0.1", Control(form, "appVersionLabel").Text);
-                    Equal("iStoreOS 插件安装助手 V1.0.1", form.Text);
+                    Equal("V1.0.2", Control(form, "appVersionLabel").Text);
+                    Equal("iStoreOS 插件安装助手 V1.0.2", form.Text);
                     Equal(new Version(1, 0, 0, 0), typeof(MainForm).Assembly.GetName().Version);
                     var info = (System.Reflection.AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(typeof(MainForm).Assembly, typeof(System.Reflection.AssemblyInformationalVersionAttribute));
-                    Equal("1.0.1", info.InformationalVersion);
+                    Equal("1.0.2", info.InformationalVersion);
                     var fileVersion = (System.Reflection.AssemblyFileVersionAttribute)Attribute.GetCustomAttribute(typeof(MainForm).Assembly, typeof(System.Reflection.AssemblyFileVersionAttribute));
-                    Equal("1.0.1.0", fileVersion.Version);
+                    Equal("1.0.2.0", fileVersion.Version);
                 }
             });
             test("V0.3.2.1 advanced window opens modeless with five sections", () =>
@@ -118,7 +118,7 @@ namespace iStoreOS.PluginHelper.Tests
                     {
                         Open(form); UiTests.Invoke(form, "AppendSoftwareLog", "HTTP 206 中文输出"); UiTests.Invoke(form, "AppendInstallLog", "SHA256 Makeself 验证输出"); string text = Snapshot(form);
                         typeof(MainForm).GetMethod("WriteLogFile", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).Invoke(null, new object[] { path, text });
-                        Equal(text, File.ReadAllText(path, Encoding.UTF8)); Equal(0xEF, (int)File.ReadAllBytes(path)[0]); True(text.Contains("V1.0.1") && text.Contains("1.0.1")); True(!text.Contains("RC1") && !text.Contains("1.0.0-rc1"));
+                        Equal(text, File.ReadAllText(path, Encoding.UTF8)); Equal(0xEF, (int)File.ReadAllBytes(path)[0]); True(text.Contains("V1.0.2") && text.Contains("1.0.2")); True(!text.Contains("RC1") && !text.Contains("1.0.0-rc1"));
                     }
                 }
                 finally { File.Delete(path); }

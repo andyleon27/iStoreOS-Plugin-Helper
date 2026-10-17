@@ -25,6 +25,7 @@ namespace iStoreOS.PluginHelper.Tests
         [STAThread]
         private static int Main(string[] args)
         {
+            if (args.Length == 1 && args[0] == "--runner-smoke") return RunnerSmoke.RunInteractive();
             Console.OutputEncoding = System.Text.Encoding.UTF8;
             if (args.Length == 2 && args[0] == "--ui-smoke")
             {
@@ -181,6 +182,11 @@ namespace iStoreOS.PluginHelper.Tests
                 finally { File.Delete(path); }
             });
             ArchitectureCompatibilityTests.Run(Run);
+            RuntimeCompatibilityHotfixTests.Run(Run);
+            RunnerCompatibilityTests.Run(Run);
+            SftpPollTests.Run(Run);
+            PersistentPollTests.Run(Run);
+            RunnerSmoke.RunTests(Run);
             SoftwareTests.Run(Run);
             InstallationTests.Run(Run);
             UiTests.Run(Run);
@@ -221,7 +227,7 @@ namespace iStoreOS.PluginHelper.Tests
             using (var form = new MainForm())
             {
                 form.Show(); Application.DoEvents();
-                Equal("iStoreOS 插件安装助手 V1.0.1", form.Text);
+                Equal("iStoreOS 插件安装助手 V1.0.2", form.Text);
                 True(((TextBox)UiTests.Control(form, "passwordBox")).PasswordChar != '\0');
                 True(((RichTextBox)UiTests.Control(form, "logBox")).ReadOnly);
                 True(UiTests.Control(form, "dropLabel").AllowDrop);
