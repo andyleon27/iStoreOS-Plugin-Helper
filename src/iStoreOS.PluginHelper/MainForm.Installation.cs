@@ -20,14 +20,16 @@ namespace iStoreOS.PluginHelper
         private readonly StringBuilder installTranscript = new StringBuilder();
         private void RefreshInstallButton()
         {
-            installButton.Enabled = !isInstallBusy && !isConnecting && !isSoftwareBusy && !installationRequiresReview &&
+            installButton.Enabled = !isInstallBusy && !isConnecting && !isDisconnecting && !isSoftwareBusy && !maintenanceNetworkChecking && !installationRequiresReview &&
                 router != null && router.IsConnected && router.PackageManager != PackageManagerKind.Unknown && plugin != null && plugin.CompatibilityStatus == CompatibilityStatus.Compatible;
             installButton.Text = isInstallBusy ? "正在安装…" : lastWorkflowResult != null && lastWorkflowResult.CanRetry ? "再次尝试" : "安装插件";
-            uiToolTip.SetToolTip(installButton, installButton.Enabled ? "自动预检、检查软件源、校验安装包、执行并验证；临时换源会恢复原设置。" :
+            uiToolTip.SetToolTip(installButton, installButton.Enabled ? "自动预检、检查软件源、校验安装包、执行并验证；成功后保留选中的可用软件源。" :
                 isInstallBusy || isConnecting || isSoftwareBusy ? "请等待当前操作完成。" : installationRequiresReview ? "请查看结果；重新选择安装包或连接后可开始新操作。" :
-                router == null || !router.IsConnected ? "请先连接并检测路由器。" : "请选择与当前设备兼容的本地 .run 文件。");
+                router == null || !router.IsConnected ? "请先连接并检测路由器。" : "请选择与当前设备兼容的本地 .run、.ipk 或 .apk 文件。");
             cancelPreparationHint.Text = !isInstallBusy ? "检查或上传安装包时可取消准备。" : installerDispatched ? "安装已开始，不可取消。" : "可取消当前安装前准备。";
             cancelInstallButton.Enabled = isInstallBusy && !installerDispatched && installCancellation != null && !installCancellation.IsCancellationRequested;
+            RefreshMaintenanceEntry();
+            RefreshConnectionButton();
         }
         private async void InstallButton_Click(object sender, EventArgs e)
         {
@@ -36,7 +38,7 @@ namespace iStoreOS.PluginHelper
             installTranscript.Clear(); softwareTranscript.Clear(); ResetSoftwareState();
             installCancellation = new CancellationTokenSource();
             RefreshInstallButton(); softwareButton.Enabled = false; chooseButton.Enabled = false; dropLabel.AllowDrop = false;
-            SetConnectionInputs(false); connectButton.Text = "连接";
+            SetConnectionInputs(false);
             RefreshLogButtons();
             SetInstallSummary("正在准备安装", "程序将自动检查网络、软件源和安装包。", UiTone.Neutral, false);
             try

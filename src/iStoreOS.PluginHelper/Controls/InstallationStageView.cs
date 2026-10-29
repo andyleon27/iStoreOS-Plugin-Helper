@@ -16,7 +16,7 @@ namespace iStoreOS.PluginHelper.Controls
         {
             Name = "installationStages"; Dock = DockStyle.Fill; RowCount = 8; ColumnCount = 3; Margin = Padding.Empty;
             ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 24)); ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130)); ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            var titles = new[] { "预检", "软件源", "上传", "完整性校验", "安装", "验证", "恢复软件源", "清理" };
+            var titles = new[] { "预检", "软件源", "上传", "完整性校验", "安装", "验证", "软件源收尾", "清理" };
             for (int i = 0; i < titles.Length; i++)
             {
                 RowStyles.Add(new RowStyle(SizeType.Percent, 12.5F));
@@ -69,7 +69,8 @@ namespace iStoreOS.PluginHelper.Controls
                 if (install.CleanupSucceeded) State(7, "完成", UiTheme.Success);
                 else State(7, "未确认 · 查看结果", UiTheme.Warning);
             }
-            if (workflow.SourceRestored) State(6, "完成", UiTheme.Success);
+            if (workflow.SourceRetained) State(6, "已保留当前源", UiTheme.Success);
+            else if (workflow.SourceRestored) State(6, "完成", UiTheme.Success);
             else if (workflow.RestoreAttempted || workflow.SourceChanged) State(6, "待确认 · 查看结果", UiTheme.Warning);
             else State(6, "无需恢复", UiTheme.SecondaryText);
         }

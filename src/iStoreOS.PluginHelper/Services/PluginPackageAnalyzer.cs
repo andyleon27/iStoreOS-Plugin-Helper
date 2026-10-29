@@ -14,16 +14,25 @@ namespace iStoreOS.PluginHelper.Services
 
         public PluginPackageInfo AnalyzeFile(string path)
         {
-            if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("请选择 .run 文件。");
+            if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("请选择 .run、.ipk 或 .apk 文件。");
             var file = new FileInfo(Path.GetFullPath(path));
             if (!file.Exists) throw new FileNotFoundException("文件不存在或无法访问。", path);
             if ((file.Attributes & FileAttributes.Directory) != 0) throw new ArgumentException("请选择文件。");
-            if (!string.Equals(file.Extension, ".run", StringComparison.OrdinalIgnoreCase))
-                throw new ArgumentException("请选择扩展名为 .run 的文件。");
+            if (!IsSupported(file.Name)) throw new ArgumentException("请选择扩展名为 .run、.ipk 或 .apk 的文件。");
             PluginPackageInfo info = AnalyzeFileName(file.Name);
             info.FilePath = file.FullName;
             info.FileSize = file.Length;
+            if (info.Format != LocalPackageFormat.Run)
+                using (var source = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    NativePackageReader.Read(source, info);
             return info;
+        }
+
+        public static bool IsSupported(string path)
+        {
+            string extension = Path.GetExtension(path ?? "");
+            return string.Equals(extension, ".run", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(extension, ".ipk", StringComparison.OrdinalIgnoreCase) || string.Equals(extension, ".apk", StringComparison.OrdinalIgnoreCase);
         }
 
         // No file is opened or executed. This entry point supports small filename-only tests.
@@ -36,6 +45,9 @@ namespace iStoreOS.PluginHelper.Services
                 CompatibilityStatus = CompatibilityStatus.Unknown,
                 CompatibilityMessage = "无法确定兼容性：请先连接并检测路由器。"
             };
+            if (string.Equals(Path.GetExtension(info.FileName), ".ipk", StringComparison.OrdinalIgnoreCase)) info.Format = LocalPackageFormat.Ipk;
+            else if (string.Equals(Path.GetExtension(info.FileName), ".apk", StringComparison.OrdinalIgnoreCase)) info.Format = LocalPackageFormat.Apk;
+            if (info.Format != LocalPackageFormat.Run) { info.PluginName = "待读取包元数据"; info.PackageType = info.Format == LocalPackageFormat.Ipk ? "IPK" : "APK"; return info; }
             if (!string.Equals(Path.GetExtension(info.FileName), ".run", StringComparison.OrdinalIgnoreCase)) return info;
             string stem = Path.GetFileNameWithoutExtension(info.FileName);
             int sdkMarker = stem.LastIndexOf("_sdk_", StringComparison.OrdinalIgnoreCase);

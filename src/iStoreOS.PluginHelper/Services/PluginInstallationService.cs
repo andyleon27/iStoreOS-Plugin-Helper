@@ -29,7 +29,7 @@ namespace iStoreOS.PluginHelper.Services
             try
             {
                 token.ThrowIfCancellationRequested();
-                report("1/7 安装前重新校验", "重新读取本地文件，重新判断 SDK / Architecture。");
+                report("1/7 安装前重新校验", "重新读取本地安装包，重新检查格式、元数据与设备兼容性。");
                 result.Plugin = new PluginPackageAnalyzer().AnalyzeFile(filePath);
                 new CompatibilityService().Evaluate(result.Plugin, router);
                 if (result.Plugin.CompatibilityStatus != CompatibilityStatus.Compatible || router.PackageManager == PackageManagerKind.Unknown)
@@ -38,6 +38,13 @@ namespace iStoreOS.PluginHelper.Services
                 // replacement and deletion while the bytes being hashed are subsequently uploaded.
                 using (var source = new FileStream(result.Plugin.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
+                    bool native = result.Plugin.Format != LocalPackageFormat.Run;
+                    if (native)
+                    {
+                        NativePackageReader.Read(source, result.Plugin);
+                        new CompatibilityService().Evaluate(result.Plugin, router);
+                        if (result.Plugin.CompatibilityStatus != CompatibilityStatus.Compatible) throw new InvalidDataException(result.Plugin.CompatibilityMessage);
+                    }
                     result.Plugin.FileSize = source.Length;
                     if (source.Length == 0) throw new InvalidDataException("安装包为空。");
                     result.Sha256 = PluginPackageInspection.ComputeSha256(source);
@@ -49,7 +56,7 @@ namespace iStoreOS.PluginHelper.Services
                     token.ThrowIfCancellationRequested();
                     uploadTiming = timing.Measure("UploadIntegrity");
                     CheckSpace(session, checked(source.Length + PluginPackageInspection.SafetyMargin), report);
-                    remote = RemoteTempSession.Create(); result.RemoteDirectory = remote.Directory;
+                    remote = RemoteTempSession.Create(result.Plugin.Format); result.RemoteDirectory = remote.Directory;
                     session.CreateDirectory(remote); directoryAttempted = true;
                     result.Status = InstallStatus.FailedUpload;
                     report("2/7 上传插件", "远程临时目录：" + remote.Directory + "；SFTP 上传开始。");
@@ -70,11 +77,23 @@ namespace iStoreOS.PluginHelper.Services
                     if (session.RemoteFileSize(remote) != source.Length) throw new InvalidDataException("上传文件大小不一致，禁止安装。");
                     if (PluginPackageInspection.ComputeSha256(source) != result.Sha256) throw new InvalidDataException("本地文件在上传期间变化，禁止安装。");
                     ProbeResult hash = session.RemoteHash(remote);
+                    if (hash.ExitStatus == 127 && native) throw new InvalidDataException("原生包安装必须通过远程 SHA256；路由器没有 sha256sum，禁止安装。");
                     if (hash.ExitStatus == 127) warning("路由器没有 sha256sum；使用文件大小和 Makeself --check 校验，不安装额外工具。");
                     else if (hash.ExitStatus != 0 || PluginPackageInspection.ParseSha256(hash.Output) != result.Sha256)
                         throw new InvalidDataException("远程 SHA256 不匹配或读取失败，禁止安装。");
                     else report("3/7 SHA256", "✓ 上传文件 SHA256 校验通过。");
                     token.ThrowIfCancellationRequested();
+                    long unpack;
+                    if (native)
+                    {
+                        unpack = result.Plugin.InstalledBytes ?? checked(source.Length * 3);
+                        report("4/7 包元数据", "包名=" + result.Plugin.PluginName + "；版本=" + result.Plugin.PluginVersion + "；架构=" + result.Plugin.Architecture + "；类型=" + result.Plugin.PackageType + "；安装大小估计=" + unpack + " bytes。设备包管理器继续校验依赖、ABI 与签名。");
+                        if (!result.Plugin.InstalledBytes.HasValue) warning("包元数据未提供安装大小，按文件大小 3 倍估计空间。");
+                        result.Status = InstallStatus.FailedPrecheck;
+                        CheckSpace(session, checked(unpack + PluginPackageInspection.SafetyMargin), report);
+                    }
+                    else
+                    {
                     report("4/7 Makeself", "读取 Makeself --info。");
                     ProbeResult info = session.Inspect(remote, false); LogCommand(report, "Makeself --info", info);
                     if (info.ExitStatus != 0) throw new InvalidDataException("Makeself --info 执行失败。");
@@ -84,7 +103,7 @@ namespace iStoreOS.PluginHelper.Services
                     if (result.Archive.SdkSeries != null && result.Archive.SdkSeries != result.Plugin.SdkSeries)
                         throw new InvalidDataException("Makeself Identification 与文件名 SDK 冲突，禁止安装。");
                     if (result.Archive.Architecture == null) warning("Makeself 信息未提供可用架构；仍依据重新读取的文件名与目标设备判断。");
-                    long unpack = result.Archive.UncompressedBytes ?? checked(source.Length * 3);
+                    unpack = result.Archive.UncompressedBytes ?? checked(source.Length * 3);
                     if (!result.Archive.UncompressedBytes.HasValue) warning("无法从 Makeself 信息确定解压大小；按安装包大小的 3 倍另加 32 MiB 检查剩余空间。");
                     result.Status = InstallStatus.FailedPrecheck;
                     CheckSpace(session, checked(unpack + PluginPackageInspection.SafetyMargin), report);
@@ -92,6 +111,7 @@ namespace iStoreOS.PluginHelper.Services
                     result.Status = InstallStatus.FailedIntegrity;
                     ProbeResult check = session.Inspect(remote, true); LogCommand(report, "Makeself --check", check);
                     if (!PluginPackageInspection.IntegrityPassed(check)) throw new InvalidDataException("安装包完整性验证失败，禁止安装。");
+                    }
                     result.Status = InstallStatus.FailedPrecheck;
                     token.ThrowIfCancellationRequested();
                     report("4/7 安装准备", "检查 shell 内建 HUP trap；日志和结束状态通过受信任 SFTP 直接读取。");
@@ -116,7 +136,7 @@ namespace iStoreOS.PluginHelper.Services
                     token.ThrowIfCancellationRequested();
                     // Mark before dispatch: a lost acknowledgement must never cause a retry or cleanup.
                     result.InstallerStarted = true;
-                    report("5/7 正在安装", "安装正在进行，请勿关闭程序或断开路由器电源。执行作者原始 sh package.run；不会自动重试。");
+                    report("5/7 正在安装", native ? "安装正在进行，请勿关闭程序或断开路由器电源。执行 " + (result.Plugin.Format == LocalPackageFormat.Ipk ? "opkg install package.ipk" : "apk add package.apk") + "；保留包管理器安全校验。" : "安装正在进行，请勿关闭程序或断开路由器电源。执行作者原始 sh package.run；不会自动重试。");
                     using (timing.Measure("InstallerRuntime"))
                     try
                     {
@@ -174,7 +194,7 @@ namespace iStoreOS.PluginHelper.Services
                         try { result.CleanupSucceeded = session.Cleanup(remote); }
                         catch (Exception exception) { warning("清理异常：" + session.Sanitize(exception.Message)); }
                         if (!result.CleanupSucceeded) warning("远程临时文件未确认清理；请检查：" + remote.Directory);
-                        else report("7/7 正在清理", "远程 session 与 package.run 已确认不存在。");
+                        else report("7/7 正在清理", "远程 session 与 " + remote.PackageFileName + " 已确认不存在。");
                         try { report("7/7 正在清理", "/tmp 清理后 Available=" + session.TmpAvailable()); }
                         catch (Exception exception) { warning("清理后空间读数不可用：" + session.Sanitize(exception.Message)); }
                     }

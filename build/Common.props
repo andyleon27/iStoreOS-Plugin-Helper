@@ -13,6 +13,7 @@
     <EnableFrameworkPathOverride>false</EnableFrameworkPathOverride>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="ZstdSharp"><HintPath>$(PackagesDirectory)ZstdSharp.Port.0.8.8\lib\net462\ZstdSharp.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="mscorlib" />
     <Reference Include="System" />
     <Reference Include="System.Core" />

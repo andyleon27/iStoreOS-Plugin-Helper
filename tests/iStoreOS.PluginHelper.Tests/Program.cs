@@ -27,6 +27,91 @@ namespace iStoreOS.PluginHelper.Tests
         {
             if (args.Length == 1 && args[0] == "--runner-smoke") return RunnerSmoke.RunInteractive();
             Console.OutputEncoding = System.Text.Encoding.UTF8;
+            if (args.Length == 1 && args[0] == "--maintenance-cleanup-only")
+            {
+                Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
+                MaintenanceCleanupTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed"); return failed == 0 ? 0 : 1;
+            }
+            if (args.Length >= 2 && args[0] == "--native-package-inspect")
+            {
+                for (int i = 1; i < args.Length; i++)
+                { var p = Analyzer.AnalyzeFile(args[i]); Console.WriteLine(p.FileName + "|" + p.Format + "|" + p.PluginName + "|" + p.PluginVersion + "|" + p.Architecture + "|" + p.InstalledBytes); }
+                return 0;
+            }
+            if (args.Length == 1 && args[0] == "--native-package-only")
+            {
+                Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
+                NativePackageTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed"); return failed == 0 ? 0 : 1;
+            }
+            if (args.Length == 1 && args[0] == "--maintenance-launch-only")
+            {
+                Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
+                MaintenanceLaunchTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed"); return failed == 0 ? 0 : 1;
+            }
+            if (args.Length == 1 && args[0] == "--computer-proxy-only")
+            {
+                ComputerProxyTunnelTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed");
+                return failed == 0 ? 0 : 1;
+            }
+            if (args.Length == 1 && args[0] == "--connection-toggle-only")
+            {
+                Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
+                ConnectionToggleTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed");
+                return failed == 0 ? 0 : 1;
+            }
+            if (args.Length == 1 && args[0] == "--terminal-display-only")
+            {
+                Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
+                TerminalDisplayTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed");
+                return failed == 0 ? 0 : 1;
+            }
+            if (args.Length == 1 && args[0] == "--maintenance-http-only")
+            {
+                MaintenanceHttpDiagnosticsTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed");
+                return failed == 0 ? 0 : 1;
+            }
+            if (args.Length == 1 && args[0] == "--menu-window-only")
+            {
+                Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
+                MaintenanceMenuWindowTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed");
+                return failed == 0 ? 0 : 1;
+            }
+            if (args.Length == 1 && args[0] == "--menu-ssh-only")
+            {
+                MaintenanceMenuSshTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed");
+                return failed == 0 ? 0 : 1;
+            }
+            if (args.Length == 1 && (args[0] == "--menu-runtime-only" || args[0] == "--menu-runtime-shell"))
+            {
+                if (args[0] == "--menu-runtime-shell") MaintenanceMenuRuntimeTests.RunShell(Run);
+                else MaintenanceMenuRuntimeTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed");
+                return failed == 0 ? 0 : 1;
+            }
+            if (args.Length == 1 && (args[0] == "--menu-preparation-only" || args[0] == "--menu-shell-boundaries"))
+            {
+                if (args[0] == "--menu-shell-boundaries") MaintenanceMenuPreparationTests.RunShellBoundaries(Run);
+                else MaintenanceMenuPreparationTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed");
+                return failed == 0 ? 0 : 1;
+            }
+            if (args.Length == 1 && args[0] == "--terminal-only")
+            {
+                Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
+                MaintenanceTerminalTests.Run(Run);
+                TerminalDisplayTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed");
+                return failed == 0 ? 0 : 1;
+            }
             if (args.Length == 2 && args[0] == "--ui-smoke")
             {
                 Run("WinForms startup and layout", () => UiSmoke(args[1]));
@@ -164,6 +249,8 @@ namespace iStoreOS.PluginHelper.Tests
                 foreach (RouterProbe probe in Enum.GetValues(typeof(RouterProbe)))
                 {
                     string command = ReadOnlyRouterCommands.Get(probe);
+                    // Discovering a package manager executable does not invoke it.
+                    command = Regex.Replace(command, @"\bcommand -v (apk|opkg)(?=\s)", "command -v package_manager");
                     Equal(false, Regex.IsMatch(command, @"\b(rm|mv|cp|sed|uci|apk|opkg|sh)\s"));
                     Equal(false, command.Contains("POST")); Equal(false, command.Contains("/etc/init.d/"));
                 }
@@ -189,12 +276,25 @@ namespace iStoreOS.PluginHelper.Tests
             RunnerSmoke.RunTests(Run);
             SoftwareTests.Run(Run);
             InstallationTests.Run(Run);
+            NativePackageTests.Run(Run);
             UiTests.Run(Run);
             WorkflowTests.Run(Run);
             CompactUiTests.Run(Run);
             RoundedUiTests.Run(Run);
             AdvancedUiTests.Run(Run);
             UiTests.RunReleaseAudit(Run);
+            ConnectionToggleTests.Run(Run);
+            ComputerProxyTunnelTests.Run(Run);
+            MaintenanceLaunchTests.Run(Run);
+            MaintenanceHttpDiagnosticsTests.Run(Run);
+            MaintenanceCleanupTests.Run(Run);
+            MaintenanceMenuPreparationTests.Run(Run);
+            MaintenanceMenuRuntimeTests.Run(Run);
+            MaintenanceMenuSshTests.Run(Run);
+            MaintenanceMenuWindowTests.Run(Run);
+            MaintenanceTerminalTests.Run(Run);
+            TerminalDisplayTests.Run(Run);
+            WorkflowTests.SourceRetentionTests(Run);
             if (args.Length == 2 && args[0] == "--file") Run("Real local package", () =>
             {
                 var plugin = Analyzer.AnalyzeFile(args[1]); Equal("PassWall", plugin.PluginName); Equal("26.9.16", plugin.PluginVersion);
@@ -227,7 +327,7 @@ namespace iStoreOS.PluginHelper.Tests
             using (var form = new MainForm())
             {
                 form.Show(); Application.DoEvents();
-                Equal("iStoreOS 插件安装助手 V1.0.2", form.Text);
+                Equal("iStoreOS 插件安装助手 V1.1.0", form.Text);
                 True(((TextBox)UiTests.Control(form, "passwordBox")).PasswordChar != '\0');
                 True(((RichTextBox)UiTests.Control(form, "logBox")).ReadOnly);
                 True(UiTests.Control(form, "dropLabel").AllowDrop);

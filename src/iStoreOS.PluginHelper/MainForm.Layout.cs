@@ -95,7 +95,7 @@ namespace iStoreOS.PluginHelper
             var dropLayout = Columns(2); dropLayout.ColumnStyles.Clear(); dropLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); dropLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 102));
             var caption = Columns(4); caption.ColumnStyles.Clear(); caption.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); caption.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 36)); caption.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220)); caption.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             var upload = AccentedPicture("upload", 26, UiTheme.UploadAccent); upload.Image = uiResources.Image("upload", 52, UiTheme.UploadIcon); upload.Name = "dropUploadIcon"; caption.Controls.Add(upload, 1, 0);
-            dropLabel = new DropCaption { Text = "拖入 Are-u-ok .run 插件\n或点击选择文件", Name = "dropLabel", Dock = DockStyle.Fill, AllowDrop = true, Font = uiResources.Font(10F, FontStyle.Regular), Margin = Padding.Empty };
+            dropLabel = new DropCaption { Text = "拖入 .run / .ipk / .apk\n或点击选择文件", Name = "dropLabel", Dock = DockStyle.Fill, AllowDrop = true, Font = uiResources.Font(10F, FontStyle.Regular), Margin = Padding.Empty };
             caption.Controls.Add(dropLabel, 2, 0);
             chooseButton = ActionButton("选择文件", null, 102, false, "chooseButton"); chooseButton.Height = 36; chooseButton.Anchor = AnchorStyles.None; chooseButton.Margin = Padding.Empty;
             dropLayout.Controls.Add(caption, 0, 0); dropLayout.Controls.Add(chooseButton, 1, 0); drop.Controls.Add(dropLayout);
@@ -149,7 +149,7 @@ namespace iStoreOS.PluginHelper
             toggleLogButton.MouseLeave += (sender, args) => toggleLogButton.LinkColor = UiTheme.LinkNormal;
             detailsLink = new LinkLabel { Name = "detailsLink", Text = "查看详细信息", Dock = DockStyle.Right, Width = 110, TextAlign = ContentAlignment.MiddleRight, Visible = false, LinkColor = UiTheme.Blue };
             detailsLink.LinkClicked += (sender, args) => ShowAdvancedInformation(true);
-            var panel = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, Padding = new Padding(8, 0, 8, 12) }; panel.Controls.Add(toggleLogButton); panel.Controls.Add(detailsLink); return panel;
+            var panel = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, Padding = new Padding(8, 0, 8, 12) }; panel.Controls.Add(toggleLogButton); panel.Controls.Add(detailsLink); AttachMaintenanceEntry(panel, toggleLogButton); return panel;
         }
         private void SetWorkflowStage(int stage) { }
         private void SetStatusAppearance(Label text, UiTone tone)

@@ -52,11 +52,11 @@ namespace iStoreOS.PluginHelper.Tests
                     Equal(0, fake.Starts); True(result.SourceRestored); Equal(fake.Original, fake.Current); True(result.Installation.CleanupSucceeded);
                     True(fake.Events.IndexOf("restore") < fake.Events.IndexOf("cleanup"));
                 }));
-                test("V1.0.2 installation " + manager + " false POST acknowledgement verified state still installs and restores", () => Fixture(Name, path =>
+                test("V1.0.2 installation " + manager + " false POST acknowledgement verified state installs and retains source", () => Fixture(Name, path =>
                 {
                     var fake = new Fake { PostNotAcknowledged = true }; if (manager == PackageManagerKind.OPKG) fake.MakeOpkg(); fake.BadHosts.Add("old.test");
                     var result = Run(Service(), fake, path); Equal(InstallationState.Success, result.State); Equal(1, fake.Starts);
-                    Equal(1, fake.UpdateCalls); Equal("A", string.Join(",", fake.Switches)); True(result.SourceRestored); Equal(fake.Original, fake.Current);
+                    Equal(1, fake.UpdateCalls); Equal("A", string.Join(",", fake.Switches)); True(result.SourceRetained); Equal(false, result.RestoreAttempted); Equal(0, fake.Restores);
                 }));
                 test("V1.0.2 installation " + manager + " false acknowledgement wrong actual identity still blocks", () => Fixture(Name, path =>
                 {
@@ -72,10 +72,10 @@ namespace iStoreOS.PluginHelper.Tests
                 }));
             }
             Case(test, "healthy current source no switch", f => { }, (r, f) => { Equal(InstallationState.Success, r.State); Equal(0, f.Switches.Count); Equal(0, f.Backups); Equal(1, f.Starts); True(r.Installation.CleanupSucceeded); });
-            Case(test, "transient current canary failure is cached and fallback restores exact text", f => f.TransientFailures = 1, (r, f) => { Equal(InstallationState.Success, r.State); Equal(1, f.Switches.Count); Equal(1, f.Backups); Equal(f.Original, f.Current); Equal(1, f.Starts); True(r.SourceRestored); Equal(1, f.ProbeUrls.Count(u => new Uri(u).Host == "old.test")); });
-            Case(test, "failed current probe uses FULL fallback and restores exact original", f => f.BadHosts.Add("old.test"), (r, f) => { Equal(InstallationState.Success, r.State); Equal("A", f.Switches.Single()); True(r.SourceRestored); Equal(f.Original, f.Current); True(f.Events.IndexOf("restore") < f.Events.IndexOf("cleanup")); });
+            Case(test, "transient current canary failure is cached and fallback retained", f => f.TransientFailures = 1, (r, f) => { Equal(InstallationState.Success, r.State); Equal(1, f.Switches.Count); Equal(1, f.Backups); Equal(1, f.Starts); True(r.SourceRetained); Equal(0, f.Restores); Equal(1, f.ProbeUrls.Count(u => new Uri(u).Host == "old.test")); });
+            Case(test, "failed current probe uses FULL fallback and retains selected source", f => f.BadHosts.Add("old.test"), (r, f) => { Equal(InstallationState.Success, r.State); Equal("A", f.Switches.Single()); True(r.SourceRetained); Equal(false, r.RestoreAttempted); Equal(0, f.Restores); True(r.Installation.CleanupSucceeded); });
             Case(test, "first package update failure proceeds to second source", f => f.Updates.Enqueue(new PackageUpdateResult { ExitCode = 1, Stderr = FailureUrl("old.test") }), (r, f) => { Equal(InstallationState.Success, r.State); Equal(2, f.UpdateCalls); Equal(1, f.Starts); Equal("A", f.Switches.Single()); });
-            Case(test, "explicit official download failure permits next run", f => f.Runs.Enqueue(new Outcome { Exit = 1, Log = FailureUrl("old.test") }), (r, f) => { Equal(InstallationState.Success, r.State); Equal(2, f.Starts); Equal(2, r.Attempts.Count); True(r.SourceRestored); });
+            Case(test, "explicit official download failure permits next run", f => f.Runs.Enqueue(new Outcome { Exit = 1, Log = FailureUrl("old.test") }), (r, f) => { Equal(InstallationState.Success, r.State); Equal(2, f.Starts); Equal(2, r.Attempts.Count); True(r.SourceRetained); });
             Case(test, "script error never rotates", f => f.Runs.Enqueue(new Outcome { Exit = 2, Log = "install.sh: syntax error: unexpected token" }), (r, f) => { Equal(InstallationFailureKind.InstallerScript, r.Failure.Kind); Equal(1, f.Starts); Equal(0, f.Switches.Count); });
             Case(test, "unknown nonzero never rotates", f => f.Runs.Enqueue(new Outcome { Exit = 2, Log = "some unknown failure" }), (r, f) => { Equal(InstallationFailureKind.UnknownInstaller, r.Failure.Kind); Equal(1, f.Starts); Equal(0, f.Switches.Count); });
             Case(test, "partial diff with official failure resumes without uninstall", f => f.Runs.Enqueue(new Outcome { Exit = 1, Log = FailureUrl("old.test"), Partial = true }), (r, f) => { Equal(2, f.Starts); True(r.Attempts[0].Result.Diff.Added.Any(p => p.Name == "dependency")); True(r.Attempts[1].Result.BeforePackages.Packages.ContainsKey("dependency")); Equal(InstallationState.Success, r.State); });
@@ -95,9 +95,9 @@ namespace iStoreOS.PluginHelper.Tests
                 var result = Run(service, f, path); Equal(InstallationState.Success, result.State); Equal(0, f.Starts); Equal(0, f.CandidateReads); // Failed preflight and healthy-current retry both avoid the lazy candidate endpoint.
             }));
             Case(test, "remote run disappears reupload then rehash", f => f.MissingBeforeDispatch = true, (r, f) => { Equal(InstallationState.Success, r.State); Equal(2, f.Uploads); True(f.HashReads >= 2); Equal(1, f.Starts); });
-            Case(test, "success restores exact original comments and hash", f => f.BadHosts.Add("old.test"), (r, f) => { True(r.SourceRestored); Equal(f.Original, f.Current); Equal(1, f.Restores); True(r.OriginalHash.Length == 64); });
+            Case(test, "success retains selected source and original diagnostic hash", f => f.BadHosts.Add("old.test"), (r, f) => { True(r.SourceRetained); Equal(SoftwareSourceService.RebaseRom(f.Rom, "https://a.test/openwrt/"), f.Current); Equal(0, f.Restores); True(r.OriginalHash.Length == 64); Equal(1, f.BackupDeletes); });
             Case(test, "failure also restores official source", f => { f.BadHosts.Add("old.test"); f.Runs.Enqueue(new Outcome { Exit = 2, Log = "syntax error" }); }, (r, f) => { Equal(InstallationFailureKind.InstallerScript, r.Failure.Kind); True(r.SourceRestored); Equal(f.Original, f.Current); });
-            Case(test, "restore warning preserves verified installed success", f => { f.BadHosts.Add("old.test"); f.RestoreFailure = true; }, (r, f) => { Equal(InstallationState.Success, r.State); True(r.Installation.Verification.Verified); Equal(false, r.SourceRestored); True(r.Warnings.Any(w => w.Contains("原软件源恢复失败"))); Equal(0, f.BackupDeletes); });
+            Case(test, "restore warning preserves original installer failure", f => { f.BadHosts.Add("old.test"); f.RestoreFailure = true; f.Runs.Enqueue(new Outcome { Exit = 2, Log = "syntax error" }); }, (r, f) => { Equal(InstallationFailureKind.InstallerScript, r.Failure.Kind); Equal(false, r.SourceRestored); True(r.Warnings.Any(w => w.Contains("原软件源恢复失败"))); Equal(0, f.BackupDeletes); });
             Case(test, "compat failure never rotates official mirrors", f => f.Runs.Enqueue(new Outcome { Exit = 1, Log = "ERROR: fetching " + Compat + ": temporary error" }), (r, f) => { Equal(InstallationFailureKind.AdditionalRepository, r.Failure.Kind); Equal(0, f.Switches.Count); Equal(1, f.Starts); });
             Case(test, "custom update failure never rotates", f => f.Updates.Enqueue(new PackageUpdateResult { ExitCode = 1, Stderr = "ERROR: fetching https://custom.test/repo/packages.adb: temporary error" }), (r, f) => { Equal(0, f.Starts); Equal(0, f.Switches.Count); Equal(InstallationFailureKind.AdditionalRepository, r.Failure.Kind); });
             Case(test, "external plugin repository never rotates", f => f.Runs.Enqueue(new Outcome { Exit = 1, Log = "failed to download package https://plugin.test/file.apk: connection timeout" }), (r, f) => { Equal(InstallationFailureKind.ExternalRepository, r.Failure.Kind); Equal(0, f.Switches.Count); });
@@ -126,7 +126,7 @@ namespace iStoreOS.PluginHelper.Tests
             Case(test, "missing router hash allows initial fallback but never automatic rerun", f => { f.HashUnavailable = true; f.Runs.Enqueue(new Outcome { Exit = 1, Log = FailureUrl("old.test") }); }, (r, f) => { Equal(1, f.Starts); Equal(0, f.Switches.Count); });
             Case(test, "duplicate mirrors cannot increase attempt ceiling", f => { f.DuplicateCandidates = true; foreach (string host in new[] { "old.test", "a.test", "b.test" }) f.Runs.Enqueue(new Outcome { Exit = 1, Log = FailureUrl(host) }); }, (r, f) => { Equal(3, f.Starts); Equal(2, f.Switches.Count); Equal(InstallationFailureKind.MirrorsExhausted, r.Failure.Kind); });
             test("V0.3.2 failed restoration cannot become next original baseline", () => Fixture(Name, path => {
-                var f = new Fake { RestoreFailure = true }; f.BadHosts.Add("old.test"); var service = Service(); Equal(InstallationState.Success, Run(service, f, path).State); int starts = f.Starts;
+                var f = new Fake { RestoreFailure = true }; f.BadHosts.Add("old.test"); f.Runs.Enqueue(new Outcome { Exit = 2, Log = "syntax error" }); var service = Service(); Equal(InstallationFailureKind.InstallerScript, Run(service, f, path).Failure.Kind); int starts = f.Starts;
                 var second = Run(service, f, path); Equal(InstallationFailureKind.Tool, second.Failure.Kind); Equal(starts, f.Starts); True(second.Warnings.Any(w => w.Contains("恢复失败")));
                 True(service.HasPendingWork); var third = Run(service, f, path); Equal(InstallationFailureKind.Tool, third.Failure.Kind); Equal(starts, f.Starts); True(service.HasPendingWork);
             }));
@@ -173,9 +173,9 @@ namespace iStoreOS.PluginHelper.Tests
                     var eye = UiTests.Control(form, "passwordToggleButton"); True(eye.Parent.ClientRectangle.Contains(eye.Bounds)); True(eye.Parent.Parent.ClientRectangle.Contains(eye.Parent.Bounds));
                     var toggle = UiTests.Control(form, "toggleLogButton"); True(toggle.Parent.ClientRectangle.Contains(toggle.Bounds)); form.Close(); }
             });
-            Case(test, "success follows restoration and cleanup in state history", f => f.BadHosts.Add("old.test"), (r, f) => { Equal(InstallationState.Success, r.States.Last()); True(r.States.IndexOf(InstallationState.RestoringSource) < r.States.IndexOf(InstallationState.Cleaning)); True(r.States.IndexOf(InstallationState.Cleaning) < r.States.IndexOf(InstallationState.Success)); });
+            Case(test, "success retains source and still completes cleanup in state history", f => f.BadHosts.Add("old.test"), (r, f) => { Equal(InstallationState.Success, r.States.Last()); Equal(false, r.States.Contains(InstallationState.RestoringSource)); True(r.States.Contains(InstallationState.Cleaning)); True(r.SourceRetained && r.Installation.CleanupSucceeded); });
             Case(test, "OPKG current source path runs same orchestration", f => f.MakeOpkg(), (r, f) => { Equal(InstallationState.Success, r.State); Equal(PackageManagerKind.OPKG, r.Router.PackageManager); Equal(1, f.Starts); Equal(0, f.Switches.Count); });
-            Case(test, "OPKG download retry restores distfeeds conf", f => { f.MakeOpkg(); f.Runs.Enqueue(new Outcome { Exit = 1, Log = "opkg_download: Failed to download https://old.test/openwrt/releases/24.10/packages/x86_64/base/dependency.ipk, wget returned 4." }); }, (r, f) => { Equal(InstallationState.Success, r.State); Equal(2, f.Starts); True(r.SourceRestored); Equal(f.Original, f.Current); });
+            Case(test, "OPKG download retry retains selected distfeeds conf on success", f => { f.MakeOpkg(); f.Runs.Enqueue(new Outcome { Exit = 1, Log = "opkg_download: Failed to download https://old.test/openwrt/releases/24.10/packages/x86_64/base/dependency.ipk, wget returned 4." }); }, (r, f) => { Equal(InstallationState.Success, r.State); Equal(2, f.Starts); True(r.SourceRetained); Equal(0, f.Restores); });
             Case(test, "current custom official text cannot repeat same mirror alias", f => { f.Original += "https://old.test/openwrt/releases/25.12/packages/x86_64/extra/packages.adb\n"; f.Current = f.Original; f.DuplicateCandidates = true; foreach (string host in new[] { "old.test", "a.test", "b.test" }) f.Runs.Enqueue(new Outcome { Exit = 1, Log = FailureUrl(host) }); }, (r, f) => { Equal(3, f.Starts); Equal(2, f.Switches.Count); Equal(f.Original, f.Current); });
             test("V0.3.2 progress shows backup action without mirror identity or attempt counters", () => Fixture(Name, path => {
                 var f = new Fake(); f.BadHosts.Add("old.test"); var messages = new List<string>(); var service = Service();
@@ -183,7 +183,7 @@ namespace iStoreOS.PluginHelper.Tests
                 Equal(InstallationState.Success, result.State); True(messages.Any(m => m.Contains("备用镜像"))); Equal(false, messages.Any(m => m.Contains("old.test") || m.Contains("a.test") || m.Contains("Attempt")));
             }));
             test("V0.3.2 stale QuickStart identity after raw restoration cannot skip a usable mirror", () => Fixture(Name, path => {
-                var f = new Fake(); var service = Service(); f.BadHosts.Add("old.test"); Equal(InstallationState.Success, Run(service, f, path).State);
+                var f = new Fake(); var service = Service(); f.BadHosts.Add("old.test"); f.Runs.Enqueue(new Outcome { Exit = 2, Log = "syntax error" }); Equal(InstallationFailureKind.InstallerScript, Run(service, f, path).Failure.Kind);
                 Equal(f.Original, f.Current); Equal("A", f.Identity); f.BadHosts.Clear(); f.Runs.Enqueue(new Outcome { Exit = 1, Log = FailureUrl("old.test") });
                 var next = Run(service, f, path); Equal(InstallationState.Success, next.State); Equal("A", f.Switches.Last()); Equal(3, f.Starts);
             }));
@@ -209,8 +209,8 @@ namespace iStoreOS.PluginHelper.Tests
         private static ProbeResult Ok(string text) { return new ProbeResult { ExitStatus = 0, Output = text, Error = "" }; }
         private static void True(bool value) { Equal(true, value); }
         private static void Equal<T>(T expected, T actual) { if (!object.Equals(expected, actual)) throw new Exception("Expected " + expected + ", actual " + actual); }
-        private sealed class Outcome { public int Exit; public string Log = ""; public bool Partial; }
-        private sealed class Fake : IInstallationWorkflowSession, IPluginInstallSession, ISoftwareSourceSession, IFastRepositoryProbeSession, IInstallerMonitoringSession
+        internal sealed class Outcome { public int Exit; public string Log = ""; public bool Partial; }
+        internal sealed class Fake : IInstallationWorkflowSession, IPluginInstallSession, ISoftwareSourceSession, IFastRepositoryProbeSession, IInstallerMonitoringSession
         {
             public bool Connected = true, ConnectFailure, ChangedIdentity, Busy, HashMismatch, MakeselfBad, RestoreFailure, MissingBeforeDispatch, DisconnectPoll, LostAcknowledgement, NeverEnds;
             public bool CorruptBeforeDispatch, BusyAfterCheck, HashUnavailable, DuplicateCandidates;

@@ -18,20 +18,26 @@ namespace iStoreOS.PluginHelper
         private RouterEnvironment router;
         private PluginPackageInfo plugin;
         private bool isConnecting;
+        private bool isDisconnecting;
+        private bool connectionInputsEnabled = true;
+        private bool disconnectAction;
         private bool connectionLossReported;
 
         public MainForm()
         {
             InitializeComponent();
             SetPasswordVisibility(false);
-            AppendLog(ProductInfo.DisplayVersion + " (" + ProductInfo.Version + ") 就绪：连接路由器、选择兼容的本地 .run，点击安装。临时切换官方源后尝试恢复原配置。");
+            RefreshConnectionButton();
+            AppendLog(ProductInfo.DisplayVersion + " (" + ProductInfo.Version + ") 就绪：连接路由器、选择兼容的本地 .run / .ipk / .apk，点击安装。成功后保留选中的可用软件源，失败时沿用原有恢复流程。");
             foreach (string warning in uiResources.Warnings) AppendLog("Warning：" + warning);
             connectionTimer.Start();
         }
 
         private async void ConnectButton_Click(object sender, EventArgs e)
         {
-            if (isConnecting || isSoftwareBusy || isInstallBusy) return;
+            if (isConnecting || isDisconnecting || isSoftwareBusy || isInstallBusy || maintenanceWindowOpen || installerStateUnresolved) return;
+            if (!ssh.CanChangeConnection) { RefreshConnectionButton(); return; }
+            if (disconnectAction || ssh.IsConnected) { await DisconnectFromRouterAsync(); return; }
             string host = hostBox.Text.Trim();
             string username = usernameBox.Text.Trim();
             if (Uri.CheckHostName(host) == UriHostNameType.Unknown || host.IndexOfAny(new[] { '/', '\\', ' ', '\t', '\r', '\n' }) >= 0)
@@ -89,14 +95,69 @@ namespace iStoreOS.PluginHelper
             connectionLabel.Text = result.Success ? "✓ 已连接到 iStoreOS" : "✗ " + result.UserMessage;
             SetStatusAppearance(connectionLabel, result.Success ? UiTone.Success : UiTone.Error);
             uiToolTip.SetToolTip(connectionLabel, connectionLabel.Text);
+            RefreshConnectionButton();
+            RefreshMaintenanceEntry();
         }
 
         private void SetConnectionInputs(bool enabled)
         {
-            connectButton.Enabled = enabled; hostBox.Enabled = enabled;
+            connectionInputsEnabled = enabled; hostBox.Enabled = enabled;
             usernameBox.Enabled = enabled; passwordBox.Enabled = enabled;
             passwordToggleButton.Enabled = enabled;
-            connectButton.Text = enabled ? "连接" : "连接中…";
+            RefreshConnectionButton();
+        }
+        private void RefreshConnectionButton()
+        {
+            if (connectButton == null || connectButton.IsDisposed) return;
+            disconnectAction = ssh.IsConnected;
+            connectButton.Text = isDisconnecting ? "断开中…" : isConnecting ? "连接中…" : disconnectAction ? "断开" : "连接";
+            connectButton.Enabled = connectionInputsEnabled && !closing.IsCancellationRequested && !isConnecting && !isDisconnecting &&
+                !isSoftwareBusy && !isInstallBusy && !maintenanceNetworkChecking && !maintenanceWindowOpen && !installerStateUnresolved && ssh.CanChangeConnection;
+            uiToolTip.SetToolTip(connectButton, connectButton.Enabled ? disconnectAction ? "主动断开 SSH 并清除当前设备状态。" : "连接路由器并检测环境。" : "请等待当前任务完成；未确认的安装任务需先处理。");
+        }
+        private async System.Threading.Tasks.Task DisconnectFromRouterAsync()
+        {
+            isDisconnecting = true; SetConnectionInputs(false); RefreshInstallButton(); softwareButton.Enabled = false;
+            connectionLabel.Text = "正在断开 SSH…"; SetStatusAppearance(connectionLabel, UiTone.Neutral);
+            try
+            {
+                if (!await ssh.DisconnectAsync()) {
+                    connectionLabel.Text = "当前任务正在进行，未断开 SSH。"; SetStatusAppearance(connectionLabel, UiTone.Warning);
+                    AppendLog("主动断开已拒绝：当前任务尚未结束。"); return;
+                }
+                if (closing.IsCancellationRequested || IsDisposed) return;
+                ClearDisconnectedDeviceState();
+                AppendLog("SSH 已主动断开；已清除当前设备状态、会话认证信息和插件维护授权。");
+            }
+            catch (Exception exception)
+            {
+                if (closing.IsCancellationRequested || IsDisposed) return;
+                if (!ssh.IsConnected && !ssh.CanReconnect) ClearDisconnectedDeviceState();
+                connectionLabel.Text = "本地连接已释放，但 SSH 关闭结果未能确认。";
+                SetStatusAppearance(connectionLabel, UiTone.Warning);
+                AppendLog("主动关闭 SSH 异常：" + exception.GetType().Name);
+            }
+            finally
+            {
+                isDisconnecting = false;
+                if (!closing.IsCancellationRequested && !IsDisposed) {
+                    SetConnectionInputs(true);
+                    softwareButton.Enabled = ssh.CanChangeConnection && router != null && router.IsConnected && ssh.IsConnected && router.PackageManager != PackageManagerKind.Unknown;
+                    RefreshInstallButton(); RefreshLogButtons();
+                }
+            }
+        }
+        private void ClearDisconnectedDeviceState()
+        {
+            if (router != null) router.IsConnected = false;
+            router = null; connectionLossReported = false;
+            passwordBox.Clear(); SetPasswordVisibility(false);
+            installationRequiresReview = false; lastWorkflowResult = null;
+            ResetSoftwareState(); DisplayEnvironment();
+            packageDiffBox.Text = "尚未执行安装。";
+            SetInstallSummary("尚未执行安装", "请先连接路由器，再检查兼容性并安装插件。", UiTone.Neutral, false);
+            connectionLabel.Text = "SSH 已断开，请重新连接并检测。"; SetStatusAppearance(connectionLabel, UiTone.Neutral);
+            RefreshCompatibility(); RefreshMaintenanceEntry();
         }
 
         private void ChooseButton_Click(object sender, EventArgs e)
@@ -110,7 +171,7 @@ namespace iStoreOS.PluginHelper
             if (isInstallBusy) { e.Effect = DragDropEffects.None; return; }
             string[] paths = e.Data.GetData(DataFormats.FileDrop) as string[];
             e.Effect = paths != null && paths.Length == 1 &&
-                string.Equals(Path.GetExtension(paths[0]), ".run", StringComparison.OrdinalIgnoreCase)
+                PluginPackageAnalyzer.IsSupported(paths[0])
                 ? DragDropEffects.Copy : DragDropEffects.None;
         }
 
@@ -133,13 +194,13 @@ namespace iStoreOS.PluginHelper
                 SetWorkflowStage(2);
                 fileSizeLabel.Text = "文件大小：" + (plugin.FileSize / 1048576.0).ToString("N2") + " MiB（" + plugin.FileSize.ToString("N0") + " 字节）";
                 pluginNameLabel.Text = plugin.PluginName + " " + Display(plugin.PluginVersion);
-                pluginSummaryLabel.Text = Display(plugin.Architecture) + " · SDK " + Display(plugin.SdkSeries);
+                pluginSummaryLabel.Text = Display(plugin.Architecture) + (plugin.Format == LocalPackageFormat.Run ? " · SDK " + Display(plugin.SdkSeries) : " · " + plugin.PackageType);
                 filePathPreviewLabel.Text = plugin.FilePath; uiToolTip.SetToolTip(filePathPreviewLabel, plugin.FilePath);
                 pluginVersionLabel.Text = "版本：" + Display(plugin.PluginVersion);
                 pluginArchitectureLabel.Text = "架构：" + Display(plugin.Architecture);
-                pluginSdkLabel.Text = "SDK：" + Display(plugin.SdkSeries);
+                pluginSdkLabel.Text = plugin.Format == LocalPackageFormat.Run ? "SDK：" + Display(plugin.SdkSeries) : "SDK：由包管理器检查依赖 / ABI";
                 pluginTypeLabel.Text = "类型：" + Display(plugin.PackageType);
-                AppendLog("已选择 .run：" + plugin.FilePath + "；大小：" + plugin.FileSize + " 字节。");
+                AppendLog("已选择 " + Path.GetExtension(plugin.FileName) + "：" + plugin.FilePath + "；大小：" + plugin.FileSize + " 字节。");
                 AppendLog("解析结果：插件 " + plugin.PluginName + "；版本 " + Display(plugin.PluginVersion) +
                     "；架构 " + Display(plugin.Architecture) + "；SDK " + Display(plugin.SdkSeries) + "；类型 " + Display(plugin.PackageType));
                 RefreshCompatibility();
@@ -154,7 +215,8 @@ namespace iStoreOS.PluginHelper
                 pluginArchitectureLabel.Text = "架构：—"; pluginSdkLabel.Text = "SDK：—"; pluginTypeLabel.Text = "类型：—";
                 compatibilityLabel.Text = "无法读取插件文件，请检查文件路径和访问权限。";
                 SetStatusAppearance(compatibilityLabel, UiTone.Error);
-                compatibilityDetailLabel.Text = compatibilityLabel.Text;
+                compatibilityDetailLabel.Text = compatibilityLabel.Text + " " + exception.Message;
+                uiToolTip.SetToolTip(compatibilityLabel, exception.Message);
                 SetStatusAppearance(compatibilityDetailLabel, UiTone.Error);
                 AppendLog("文件分析失败：" + LogHelper.ExceptionDetails(exception, null));
             }
@@ -186,7 +248,7 @@ namespace iStoreOS.PluginHelper
                 return;
             }
             compatibility.Evaluate(plugin, router);
-            compatibilityLabel.Text = plugin.CompatibilityStatus == CompatibilityStatus.Compatible ? "✓ 当前设备兼容 · " + Display(plugin.Architecture) + " · SDK " + Display(plugin.SdkSeries) :
+            compatibilityLabel.Text = plugin.CompatibilityStatus == CompatibilityStatus.Compatible ? "✓ 当前设备兼容 · " + Display(plugin.Architecture) + (plugin.Format == LocalPackageFormat.Run ? " · SDK " + Display(plugin.SdkSeries) : " · " + plugin.PackageType) :
                 plugin.CompatibilityStatus == CompatibilityStatus.Incompatible ? "✗ 当前插件与设备不兼容" : router == null ? "请先连接路由器，再检查兼容性。" : "无法确定兼容性，请检查插件包。";
             compatibilityDetailLabel.Text = plugin.CompatibilityStatus + "；" + plugin.CompatibilityMessage;
             SetStatusAppearance(compatibilityDetailLabel, plugin.CompatibilityStatus == CompatibilityStatus.Compatible ? UiTone.Success : plugin.CompatibilityStatus == CompatibilityStatus.Incompatible ? UiTone.Error : UiTone.Warning);
@@ -199,7 +261,8 @@ namespace iStoreOS.PluginHelper
 
         private void ConnectionTimer_Tick(object sender, EventArgs e)
         {
-            if (isConnecting || isInstallBusy || router == null || !router.IsConnected || ssh.IsConnected || connectionLossReported) return;
+            RefreshConnectionButton();
+            if (isConnecting || isDisconnecting || isInstallBusy || router == null || !router.IsConnected || ssh.IsConnected || connectionLossReported) return;
             connectionLossReported = true;
             if (ssh.CanReconnect)
             {

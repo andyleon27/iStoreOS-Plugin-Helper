@@ -58,7 +58,7 @@ namespace iStoreOS.PluginHelper
             pageLayout.Controls.Add(BuildLogActions(), 0, 5);
             scrollPanel.Controls.Add(pageLayout); Controls.Add(scrollPanel);
             advancedInfoForm = new AdvancedInfoForm(BuildLogPanel(), windowIcon);
-            fileDialog = new OpenFileDialog { Filter = "Are-u-ok 插件 (*.run)|*.run", CheckFileExists = true, Multiselect = false, Title = "选择本地 .run 插件" };
+            fileDialog = new OpenFileDialog { Filter = "本地安装包 (*.run;*.ipk;*.apk)|*.run;*.ipk;*.apk|Are-u-ok 插件 (*.run)|*.run|OPKG 软件包 (*.ipk)|*.ipk|APK 软件包 (*.apk)|*.apk", CheckFileExists = true, Multiselect = false, Title = "选择本地 .run / .ipk / .apk 安装包" };
             components.Add(fileDialog); connectionTimer = new Timer(components) { Interval = 1000 };
             AcceptButton = connectButton;
             connectButton.Click += ConnectButton_Click; chooseButton.Click += ChooseButton_Click;

@@ -51,6 +51,7 @@ namespace iStoreOS.PluginHelper.Models
         public SoftwareEnvironmentResult Software { get; set; }
         public bool SourceChanged { get; set; }
         public bool SourceRestored { get; set; }
+        public bool SourceRetained { get; set; }
         public bool RestoreAttempted { get; set; }
         public bool PendingInstaller { get; set; }
         public string OriginalHash { get; set; }

@@ -29,14 +29,14 @@ namespace iStoreOS.PluginHelper
         }
         private async void SoftwareButton_Click(object sender, EventArgs e)
         {
-            if (isSoftwareBusy || isConnecting || isInstallBusy || router == null || !router.IsConnected) return;
+            if (isSoftwareBusy || isConnecting || isDisconnecting || isInstallBusy || router == null || !router.IsConnected) return;
             isSoftwareBusy = true;
             SetWorkflowStage(1);
             RefreshInstallButton();
             ResetSoftwareState(); softwareTranscript.Clear();
             softwareCancellation = new CancellationTokenSource();
             softwareButton.Enabled = false; RefreshLogButtons();
-            SetConnectionInputs(false); connectButton.Text = "连接并检测";
+            SetConnectionInputs(false);
             softwareProgressBar.Visible = true; softwareProgressBar.MarqueeAnimationSpeed = 30;
             AppendSoftwareLog("开始软件环境检测；包管理器 " + router.PackageManager + "；版本 " + router.Version + "；SDK " + router.SdkSeries + "；架构 " + router.Architecture);
             try

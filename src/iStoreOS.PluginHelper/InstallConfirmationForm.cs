@@ -22,7 +22,8 @@ namespace iStoreOS.PluginHelper
                 "\r\nSDK：" + summary.Router.SdkSeries + "\r\n软件环境：Ready" +
                 "\r\n当前软件源：" + UiResultFormatter.SourceLabel(summary.SoftwareEnvironment.CurrentSource) +
                 "\r\n安装包：" + summary.Plugin.FileName + "\r\nSHA256：\r\n" + summary.Sha256 +
-                "\r\n完整性：Makeself --check 通过\r\n\r\n将执行作者原始 .run，并独立验证安装结果。";
+                (summary.Plugin.Format == LocalPackageFormat.Run ? "\r\n完整性：Makeself --check 通过\r\n\r\n将执行作者原始 .run，并独立验证安装结果。" :
+                "\r\n完整性：本地 / 远端 SHA256 一致\r\n\r\n将执行 " + (summary.Plugin.Format == LocalPackageFormat.Ipk ? "opkg install" : "apk add") + "；保留设备依赖、ABI 与签名校验，并验证目标包名和完整版本。" );
             layout.Controls.Add(new TextBox { Text = text, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window }, 0, 0);
             var notice = new Label { Dock = DockStyle.Fill, Text = summary.ExistingPackage == null ? "安装开始后请勿关闭程序或断开路由器电源。" :
                 "检测到 " + summary.Plugin.PluginName + " 已经安装：" + summary.ExistingPackage + " " + summary.ExistingVersion + "。继续将执行安装 / 更新。", ForeColor = summary.ExistingPackage == null ? Color.DimGray : Color.Firebrick };

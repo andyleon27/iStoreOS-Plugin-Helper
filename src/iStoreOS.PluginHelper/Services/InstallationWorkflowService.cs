@@ -33,6 +33,7 @@ namespace iStoreOS.PluginHelper.Services
         private sealed class Context
         {
             public IInstallationWorkflowSession Session;
+            public PluginPackageInfo Plugin;
             public RouterEnvironment Router;
             public SoftwareSourceSnapshot Original;
             public string ExpectedText, Backup, FilePath, Hash;
@@ -73,6 +74,7 @@ namespace iStoreOS.PluginHelper.Services
                     Context previous = unfinished;
                     previous.Timing = context.Timing;
                     if (!SameRouter(previous.Router, context.Router)) throw new InstallationPolicyException(InstallationFailureKind.IdentityChanged, "不能在另一台设备处理上轮安装。");
+                    result.Software = previous.Result.Software;
                     previous.Session = session; previous.Progress = progress; previous.Token = CancellationToken.None; previous.Result = result;
                     result.Router = previous.Router; result.SourceChanged = previous.Mutated; result.OriginalHash = TextHash(previous.Original.OriginalText); result.BackupPath = previous.Backup;
                     if (previous.Dispatched && !previous.Finished)
@@ -83,7 +85,7 @@ namespace iStoreOS.PluginHelper.Services
                         if (!context.Finished)
                         { result.PendingInstaller = true; SetFailure(context, InstallFailureClassifier.Failure(InstallationFailureKind.ConnectionLost, "旧安装器未确认结束；本次不会执行第二个安装器。")); return result; }
                         if (context.ActiveResult.Verification != null && context.ActiveResult.Verification.Verified && context.ActiveResult.InstallerExitCode == 0)
-                        { MarkSuccess(context, "重连后旧安装器已结束，主 package 独立验证通过；没有重复执行 .run。"); return result; }
+                        { MarkSuccess(context, "重连后旧安装器已结束，目标软件包独立验证通过；没有重复执行安装器。"); return result; }
                         var failure = context.ActiveResult.InstallerExitCode != 0 ? InstallFailureClassifier.Classify(context.ReconciledLog, previous.Original.OfficialFeeds, previous.Original.AdditionalFeeds) :
                             InstallFailureClassifier.Failure(InstallationFailureKind.VerificationIncomplete);
                         if (!failure.CanRotateOfficial) { SetFailure(context, failure); return result; }
@@ -105,6 +107,13 @@ namespace iStoreOS.PluginHelper.Services
                     throw new InstallationPolicyException(InstallationFailureKind.Compatibility, plugin.CompatibilityMessage);
                 using (var lockedFile = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
+                    if (plugin.Format != LocalPackageFormat.Run)
+                    {
+                        NativePackageReader.Read(lockedFile, plugin);
+                        new CompatibilityService().Evaluate(plugin, context.Router);
+                        if (plugin.CompatibilityStatus != CompatibilityStatus.Compatible) throw new InstallationPolicyException(InstallationFailureKind.Compatibility, plugin.CompatibilityMessage);
+                    }
+                    context.Plugin = plugin;
                     if (lockedFile.Length == 0) throw new InstallationPolicyException(InstallationFailureKind.Integrity, "安装包为空。");
                     context.Hash = PluginPackageInspection.ComputeSha256(lockedFile);
                     var sources = new RecoveringSources(this, context);
@@ -131,7 +140,7 @@ namespace iStoreOS.PluginHelper.Services
                     {
                         context.Report(InstallationState.Verifying, "新一轮已重新预检 / 探源；检查上一轮之后插件是否已完成。");
                         var existing = VerifyExisting(context, plugin);
-                        if (existing != null) { result.Installation = existing; MarkSuccess(context, "目标版本已独立验证，未重新执行 .run。"); return result; }
+                        if (existing != null) { result.Installation = existing; MarkSuccess(context, "目标版本已独立验证，未重新执行安装器。"); return result; }
                     }
                     foreach (Candidate candidate in available)
                     {
@@ -157,11 +166,11 @@ namespace iStoreOS.PluginHelper.Services
                             var failure = InstallFailureClassifier.Classify((update.Stdout ?? "") + "\n" + (update.Stderr ?? ""), candidate.Feeds, context.Original.AdditionalFeeds);
                             if (failure.Kind == InstallationFailureKind.UnknownInstaller) failure = InstallFailureClassifier.Failure(InstallationFailureKind.UpdateFailure, (update.Stdout ?? "") + "\n" + (update.Stderr ?? ""));
                             if (!failure.CanRotateOfficial) { SetFailure(context, failure); return result; }
-                            context.Report(InstallationState.SourceProbe, "此源 update 有明确官方仓库错误，不执行 .run，继续下一个唯一 FULL 源。"); continue;
+                            context.Report(InstallationState.SourceProbe, "此源 update 有明确官方仓库错误，不执行安装器，继续下一个唯一 FULL 源。"); continue;
                         }
                         result.Software.Status = SoftwareEnvironmentStatus.Ready; result.Software.Message = "软件源检查与 package update 通过。";
                         result.Software.CurrentSource = candidate.Source;
-                        context.Report(InstallationState.SourceReady, "源已就绪：" + candidate.Key + "；每个唯一配置最多执行一次 .run。");
+                        context.Report(InstallationState.SourceReady, "源已就绪：" + candidate.Key + "；每个唯一配置最多执行一次安装器。");
                         var logs = new StringBuilder();
                         var adapter = new WorkflowInstaller(this, context, candidate.Feeds, result.Attempts.Count > 0 ||
                             (failedFileWasDispatched && failedFileHash == context.Hash && failedFingerprint == context.Router.HostKeyFingerprint));
@@ -169,8 +178,8 @@ namespace iStoreOS.PluginHelper.Services
                             if (!string.IsNullOrEmpty(item.Log)) logs.AppendLine(item.Log);
                             var state = item.InstallerStarted ? item.Step.Contains("验证") || item.Step.Contains("Snapshot") || item.Step.Contains("Diff") ? InstallationState.Verifying : InstallationState.Installing :
                                 item.Step.Contains("上传") ? InstallationState.Uploading : item.Step.Contains("SHA256") || item.Step.Contains("Makeself") || item.Step.Contains("确认") ? InstallationState.IntegrityCheck : context.State;
-                            // Engine cleanup is deliberately deferred until source restoration.
-                            if (item.Step.Contains("清理") || item.Step == "完成") { if (item.Log != null) context.Report(context.State, "原安装服务收尾（目录清理由编排层在原源恢复后执行）：" + item.Log.Replace("已确认不存在", "尚未清理").Replace("临时文件=已清理", "临时文件=待编排层清理")); return; }
+                            // Engine cleanup stays deferred until the workflow handles its final source outcome.
+                            if (item.Step.Contains("清理") || item.Step == "完成") { if (item.Log != null) context.Report(context.State, "原安装服务收尾（目录清理由编排层在软件源收尾后执行）：" + item.Log.Replace("已确认不存在", "尚未清理").Replace("临时文件=已清理", "临时文件=待编排层清理")); return; }
                             context.Report(state, item.Log, item);
                         });
                         PluginInstallResult installed = await Engine.RunAsync(adapter, context.Router, filePath, () => Task.FromResult(result.Software),
@@ -204,11 +213,11 @@ namespace iStoreOS.PluginHelper.Services
                 try { using (context.Timing.Measure("RestoreCleanup")) FinalizeContext(context).GetAwaiter().GetResult(); }
                 catch (Exception ex) { result.Warnings.Add("收尾异常：" + session.Sanitize(ex.Message)); }
                 if (terminal == InstallationState.Success && result.Warnings.Count > 0 && result.Installation != null) result.Installation.Warnings.AddRange(result.Warnings);
-                context.Report(terminal, "本轮结束：" + terminal + "；尝试次数=" + result.Attempts.Count + "；源修改=" + result.SourceChanged + "；原源恢复=" + result.SourceRestored);
+                context.Report(terminal, "本轮结束：" + terminal + "；尝试次数=" + result.Attempts.Count + "；源修改=" + result.SourceChanged + "；原源恢复=" + result.SourceRestored + "；当前源保留=" + result.SourceRetained);
                 context.Report(terminal, context.Timing.Summary());
                 if (result.Failure != null && context.Hash != null) { failedFileWasDispatched = context.Dispatched || (failedFileWasDispatched && failedFileHash == context.Hash && failedFingerprint == context.Router.HostKeyFingerprint); failedFileHash = context.Hash; failedFingerprint = context.Router.HostKeyFingerprint; }
                 if (result.State == InstallationState.Success) { failedFileHash = null; failedFingerprint = null; failedFileWasDispatched = false; }
-                if (context.Original != null) unfinished = (context.Dispatched && !context.Finished) || (context.Mutated && !result.SourceRestored) ? context : null;
+                if (context.Original != null) unfinished = (context.Dispatched && !context.Finished) || (context.Mutated && !result.SourceRestored && !result.SourceRetained) ? context : null;
                 lock (this) running = false;
             }
             return result;
@@ -275,6 +284,9 @@ namespace iStoreOS.PluginHelper.Services
             c.Report(InstallationState.Preflight, "Readiness：default route=" + value.DefaultRoute + "; DNS=" + value.DnsResolved + "/" + value.DnsChecked + "; epoch=" + value.UnixTime + "; /tmp=" + value.TmpBytes + "; persistent=" + value.PersistentBytes + "; readonly=" + value.PersistentReadOnly);
             var failure = InstallationReadiness.Check(value, bytes, InstallationReadiness.UnixNow);
             if (failure != null) throw new InstallationPolicyException(failure.Kind, failure.UserMessage);
+            if (c.Plugin != null && c.Plugin.Format != LocalPackageFormat.Run &&
+                value.PersistentBytes <= checked((c.Plugin.InstalledBytes ?? bytes * 3) + PluginPackageInspection.SafetyMargin))
+                throw new InstallationPolicyException(InstallationFailureKind.NoSpace, "持久存储不足以容纳原生包安装大小和 32 MiB 余量（依赖仍由包管理器检查）。");
         }
         private async Task SelectSource(Context c, ISoftwareSourceSession sources, Candidate candidate)
         {
@@ -312,7 +324,14 @@ namespace iStoreOS.PluginHelper.Services
                 c.Result.PendingInstaller = true;
                 c.Result.Warnings.Add("安装器未确认结束；保留 session 和原源备份，不在可能仍下载时修改源或删除安装文件。再次尝试将先检查旧安装器。"); return;
             }
-            if (c.Mutated)
+            if (c.Result.State == InstallationState.Success)
+            {
+                c.Result.SourceRetained = true;
+                var source = c.Result.Software == null ? null : c.Result.Software.CurrentSource;
+                if (c.Result.Software != null) c.Result.Software.Message = "已保留当前软件源设置。";
+                c.Report(InstallationState.Success, "插件安装完成。当前使用的软件源：" + (source == null ? "当前配置（自定义 / 未知名称）" : source.ToString()) + "。已保留当前软件源设置。");
+            }
+            else if (c.Mutated)
             {
                 c.Result.SourceChanged = true; c.Result.RestoreAttempted = true; c.Report(InstallationState.RestoringSource, "恢复安装前官方 distfeeds 原文；hash=" + TextHash(c.Original.OriginalText));
                 try
@@ -333,7 +352,7 @@ namespace iStoreOS.PluginHelper.Services
                 }
                 catch (Exception ex) { c.Result.Warnings.Add("插件安装流程已结束，但原软件源恢复失败，请查看高级信息。备份：" + c.Backup + "；" + c.Session.Sanitize(ex.Message)); }
             }
-            c.Report(InstallationState.Cleaning, "恢复步骤结束，清理本轮已结束的独占 session。");
+            c.Report(InstallationState.Cleaning, "软件源收尾结束，清理本轮已结束的独占 session。");
             bool cleaned = true;
             foreach (RemoteTempSession remote in c.Directories.ToArray())
             {
@@ -346,7 +365,7 @@ namespace iStoreOS.PluginHelper.Services
                 catch (Exception ex) { cleaned = false; c.Result.Warnings.Add("临时文件清理未确认：" + remote.Directory + "；" + c.Session.Sanitize(ex.Message)); }
             }
             if (c.Result.Installation != null) c.Result.Installation.CleanupSucceeded = cleaned && c.Directories.Count == 0;
-            if (c.Backup != null && (!c.Mutated || c.Result.SourceRestored))
+            if (c.Backup != null && (!c.Mutated || c.Result.SourceRestored || c.Result.SourceRetained))
             {
                 try { if (!c.Session.DeleteBackup(c.Backup)) c.Result.Warnings.Add("原配置已保留 / 恢复，但临时备份目录清理失败：" + c.Backup); }
                 catch (Exception ex) { c.Result.Warnings.Add("备份清理失败：" + c.Session.Sanitize(ex.Message)); }
@@ -355,7 +374,7 @@ namespace iStoreOS.PluginHelper.Services
         }
         private async Task Reconcile(Context c)
         {
-            c.Report(InstallationState.ReconnectChecking, "先监测上轮 session，不执行新的 .run；remote=" + c.Active.Directory);
+            c.Report(InstallationState.ReconnectChecking, "先监测上轮 session，不执行新的安装器；remote=" + c.Active.Directory);
             await EnsureConnection(c, false);
             var watch = Stopwatch.StartNew(); long stdout = 0, stderr = 0;
             var outText = new StringBuilder(); var errText = new StringBuilder();
@@ -423,10 +442,7 @@ namespace iStoreOS.PluginHelper.Services
         private static void MarkSuccess(Context c, string log)
         { c.Report(InstallationState.Verifying, log); c.Result.State = InstallationState.Success; }
         private static bool MatchesMirror(SoftwareSourceInfo source, IList<RepositoryFeed> feeds)
-        {
-            Uri mirror; if (source == null || !Uri.TryCreate(source.Url, UriKind.Absolute, out mirror) || feeds.Count == 0) return false;
-            return feeds.All(feed => { Uri index; return Uri.TryCreate(feed.IndexUrl, UriKind.Absolute, out index) && index.Scheme == mirror.Scheme && index.Host == mirror.Host && index.Port == mirror.Port && index.AbsolutePath.StartsWith(mirror.AbsolutePath.TrimEnd('/') + "/", StringComparison.Ordinal); });
-        }
+        { return SoftwareSourceService.MatchesMirror(source, feeds); }
         private static string TextHash(string text) { using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(text))) return PluginPackageInspection.ComputeSha256(stream); }
         public static string Message(InstallationState state)
         {
@@ -492,19 +508,20 @@ namespace iStoreOS.PluginHelper.Services
                     catch (IOException ex) { if (!c.Session.IsConnected || (!ex.Message.Contains("No such file") && !ex.Message.Contains("not found"))) throw; size = -1; }
                     if (size < 0)
                     {
-                        c.Report(InstallationState.Uploading, "remote .run 已丢失，重新上传同一锁定的本地文件。");
+                        c.Report(InstallationState.Uploading, "远端安装包已丢失，重新上传同一锁定的本地文件。");
                         using (var file = new FileStream(c.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read)) c.Session.Installer.Upload(file, s, bytes => { }, c.PreparationToken);
                         size = c.Session.Installer.RemoteFileSize(s);
-                        if (!PluginPackageInspection.IntegrityPassed(c.Session.Installer.Inspect(s, true))) throw new InstallationPolicyException(InstallationFailureKind.Makeself, "重新上传的 Makeself --check 未通过。");
+                        if (s.Format == LocalPackageFormat.Run && !PluginPackageInspection.IntegrityPassed(c.Session.Installer.Inspect(s, true))) throw new InstallationPolicyException(InstallationFailureKind.Makeself, "重新上传的 Makeself --check 未通过。");
                     }
                     var hash = c.Session.Installer.RemoteHash(s);
-                    if (size != uploadedBytes || (hash.ExitStatus != 127 && (hash.ExitStatus != 0 || PluginPackageInspection.ParseSha256(hash.Output) != uploadedHash)) || (retry && hash.ExitStatus == 127))
+                    if (size != uploadedBytes || (hash.ExitStatus != 127 && (hash.ExitStatus != 0 || PluginPackageInspection.ParseSha256(hash.Output) != uploadedHash)) || ((retry || s.Format != LocalPackageFormat.Run) && hash.ExitStatus == 127))
                         throw new InstallationPolicyException(InstallationFailureKind.Integrity, "启动前大小 / SHA256 再校验失败。");
+                    if (s.Format != LocalPackageFormat.Run) owner.CheckReadiness(c, c.Original.OfficialFeeds.Concat(c.Original.AdditionalFeeds).ToList(), uploadedBytes).GetAwaiter().GetResult();
                     owner.WaitForManager(c).GetAwaiter().GetResult();
                 }
                 catch (InstallationPolicyException ex) { PolicyFailure = InstallFailureClassifier.Failure(ex.Kind, ex.Message); throw; }
                 // No cancellation, re-dispatch or mirror switching while this runner may be active.
-                DidDispatch = true; c.Dispatched = true; c.Finished = false; c.Active = s; c.Report(InstallationState.Installing, "只执行作者原始 .run；不执行包卸载 / 回滚 / 代理控制。");
+                DidDispatch = true; c.Dispatched = true; c.Finished = false; c.Active = s; c.Report(InstallationState.Installing, "执行本次已校验的本地安装包：" + s.PackageFileName + "；保留对应安装器的依赖与安全校验。");
                 try { c.Session.Installer.StartInstaller(s); }
                 catch (Exception)
                 {

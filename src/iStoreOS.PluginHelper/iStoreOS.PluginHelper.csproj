@@ -31,6 +31,8 @@
     <Compile Include="MainForm.Layout.cs"><DependentUpon>MainForm.cs</DependentUpon></Compile>
     <Compile Include="MainForm.Logs.cs"><DependentUpon>MainForm.cs</DependentUpon></Compile>
     <Compile Include="MainForm.AdvancedInfo.cs"><DependentUpon>MainForm.cs</DependentUpon></Compile>
+    <Compile Include="MainForm.Maintenance.cs"><DependentUpon>MainForm.cs</DependentUpon></Compile>
+    <Compile Include="PluginMaintenanceTerminalForm.cs"><SubType>Form</SubType></Compile>
     <Compile Include="AdvancedInfoForm.cs"><SubType>Form</SubType></Compile>
     <Compile Include="InstallConfirmationForm.cs"><SubType>Form</SubType></Compile>
     <Compile Include="SoftwareRepairConfirmationForm.cs"><SubType>Form</SubType></Compile>
@@ -39,6 +41,7 @@
     <None Include="packages.config" />
     <EmbeddedResource Include="Resources\Icons\*.png"><LogicalName>iStoreOS.PluginHelper.Resources.Icons.%(Filename)%(Extension)</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="Resources\Icons\app-logo.ico"><LogicalName>iStoreOS.PluginHelper.Resources.Icons.app-logo.ico</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="..\..\third-party\openclash-auto-installer-LICENSE.txt"><LogicalName>iStoreOS.PluginHelper.ThirdParty.openclash-auto-installer.LICENSE</LogicalName></EmbeddedResource>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

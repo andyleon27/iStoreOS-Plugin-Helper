@@ -157,7 +157,7 @@ namespace iStoreOS.PluginHelper
         {
             var text = new StringBuilder(); text.AppendLine("安装状态：" + result.State);
             if (result.Failure != null) text.AppendLine("失败分类：" + result.Failure.Kind).AppendLine(result.Failure.UserMessage).AppendLine("证据：" + result.Failure.Evidence);
-            text.AppendLine("临时换源：" + result.SourceChanged + "；恢复尝试：" + result.RestoreAttempted + "；原源已恢复：" + result.SourceRestored)
+            text.AppendLine("软件源切换：" + result.SourceChanged + "；恢复尝试：" + result.RestoreAttempted + "；原源已恢复：" + result.SourceRestored + "；当前源已保留：" + result.SourceRetained)
                 .AppendLine("原源 SHA256：" + result.OriginalHash).AppendLine("源备份：" + result.BackupPath).AppendLine("安装器待确认：" + result.PendingInstaller);
             foreach (string warning in result.Warnings) text.AppendLine("提示：" + warning);
             text.AppendLine(); AppendInstallation(text, result.Installation);
@@ -177,7 +177,8 @@ namespace iStoreOS.PluginHelper
             text.AppendLine("原安装服务结果：" + result.Status).AppendLine(result.Message).AppendLine("SHA256：" + (result.Sha256 ?? "未确认"))
                 .AppendLine("临时目录：" + result.RemoteDirectory).AppendLine("安装器启动：" + result.InstallerStarted + "；结束：" + result.InstallerEnded + "；exit=" + result.InstallerExitCode)
                 .AppendLine("临时文件已清理：" + result.CleanupSucceeded);
-            if (result.Archive == null) text.AppendLine("Makeself：未取得解析结果；校验过程见完整日志。");
+            if (result.Plugin != null && result.Plugin.Format != LocalPackageFormat.Run) text.AppendLine("原生包：" + result.Plugin.PackageType + "；包名=" + result.Plugin.PluginName + "；版本=" + result.Plugin.PluginVersion + "；架构=" + result.Plugin.Architecture + "；安装大小=" + result.Plugin.InstalledBytes);
+            else if (result.Archive == null) text.AppendLine("Makeself：未取得解析结果；校验过程见完整日志。");
             else text.AppendLine("Makeself：" + result.Archive.MakeselfVersion + "；Identification=" + result.Archive.Identification)
                 .AppendLine("目标目录：" + result.Archive.TargetDirectory + "；压缩方式：" + result.Archive.Compression + "；解压字节：" + result.Archive.UncompressedBytes)
                 .AppendLine("包内架构 / SDK：" + result.Archive.Architecture + " / " + result.Archive.SdkSeries);

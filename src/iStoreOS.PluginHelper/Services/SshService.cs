@@ -10,7 +10,7 @@ using iStoreOS.PluginHelper.Utilities;
 
 namespace iStoreOS.PluginHelper.Services
 {
-    public sealed class SshService : IDisposable
+    public sealed partial class SshService : IDisposable
     {
         private readonly object sync = new object();
         private readonly HostKeyTrustStore trustStore = new HostKeyTrustStore();
@@ -25,6 +25,33 @@ namespace iStoreOS.PluginHelper.Services
         public bool CanReconnect { get { lock (sync) return !disposed && connectionFactory != null; } }
         public bool HasPendingInstallation { get { return installWorkflow.HasPendingWork; } }
         public bool HasPendingInstaller { get { return installWorkflow.HasPendingInstaller; } }
+        public bool CanChangeConnection { get { lock (sync) return CanChangeConnectionLocked(); } }
+        private bool CanChangeConnectionLocked()
+        { return !disposed && !connecting && !softwareBusy && menuLifetime == null && !installWorkflow.HasPendingWork; }
+
+        public Task<bool> DisconnectAsync()
+        {
+            SshClient active, pending;
+            lock (sync)
+            {
+                if (disposed) throw new ObjectDisposedException("SshService");
+                // Recheck atomically: an enabled button is only a UI snapshot.
+                if (!CanChangeConnectionLocked()) return Task.FromResult(false);
+                connecting = true; // Reuse the existing connection-operation gate until disposal has joined.
+                active = client; pending = pendingClient;
+                client = null; pendingClient = null;
+                connectionFactory = null; sanitizeLog = text => text ?? "";
+                ResetMaintenanceNetworkLocked();
+            }
+            return Task.Run(() => {
+                try {
+                    try { if (active != null) active.Dispose(); }
+                    finally { if (pending != null && !ReferenceEquals(active, pending)) pending.Dispose(); }
+                    return true;
+                }
+                finally { lock (sync) connecting = false; }
+            });
+        }
 
         public Task<InstallationWorkflowResult> InstallOneClickAsync(RouterEnvironment expected, string filePath,
             IProgress<InstallationWorkflowProgress> progress, CancellationToken token)
@@ -80,7 +107,7 @@ namespace iStoreOS.PluginHelper.Services
                     lock (sync) { if (disposed) throw new OperationCanceledException(); pendingClient = replacement; }
                     replacement.Connect(); token.ThrowIfCancellationRequested();
                     SshClient previous;
-                    lock (sync) { if (disposed) throw new OperationCanceledException(); previous = client; client = replacement; pendingClient = null; }
+                    lock (sync) { if (disposed) throw new OperationCanceledException(); previous = client; client = replacement; pendingClient = null; ResetMaintenanceNetworkLocked(); }
                     if (previous != null) previous.Dispose();
                 }
                 catch
@@ -107,7 +134,7 @@ namespace iStoreOS.PluginHelper.Services
             lock (sync)
             {
                 if (disposed) throw new ObjectDisposedException("SshService");
-                if (connecting || softwareBusy) throw new InvalidOperationException("连接或软件环境检测正在进行。");
+                if (!CanChangeConnectionLocked()) throw new InvalidOperationException("当前连接、安装或插件维护任务尚未结束，请等待或先确认旧任务。");
                 connecting = true;
             }
             // All synchronous SSH.NET network operations run on a worker thread.
@@ -126,7 +153,7 @@ namespace iStoreOS.PluginHelper.Services
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 SshClient previous;
-                lock (sync) { previous = client; client = null; connectionFactory = null; sanitizeLog = text => text ?? ""; }
+                lock (sync) { previous = client; client = null; connectionFactory = null; sanitizeLog = text => text ?? ""; ResetMaintenanceNetworkLocked(); }
                 if (previous != null) previous.Dispose();
                 log("开始连接：" + host + ":22（密码认证；仅执行只读检测）。");
                 var connection = new PasswordConnectionInfo(host, 22, username, password)
@@ -162,6 +189,7 @@ namespace iStoreOS.PluginHelper.Services
                 {
                     if (disposed) throw new OperationCanceledException();
                     client = current;
+                    ResetMaintenanceNetworkLocked();
                     sanitizeLog = text => LogHelper.RedactPreservingLines(text, password);
                     connectionFactory = () => new PasswordConnectionInfo(host, 22, username, password) { Timeout = TimeSpan.FromSeconds(8) };
                     pendingClient = null;
@@ -282,18 +310,27 @@ namespace iStoreOS.PluginHelper.Services
         {
             SshClient active;
             SshClient pending;
+            CancellationTokenSource menu;
+            CancellationTokenSource network;
+            ComputerProxyTunnelService proxy;
             lock (sync)
             {
                 disposed = true;
                 active = client;
                 pending = pendingClient;
+                menu = menuLifetime;
+                network = maintenanceNetworkLifetime;
+                proxy = computerProxyTunnel;
                 client = null;
                 pendingClient = null;
                 sanitizeLog = text => text ?? "";
                 connectionFactory = null;
+                ResetMaintenanceNetworkLocked();
             }
-            if (active != null) active.Dispose();
-            if (pending != null) pending.Dispose();
+            if (menu != null) { try { menu.Cancel(); } catch (ObjectDisposedException) { } catch (AggregateException) { } }
+            if (network != null) { try { network.Cancel(); } catch (ObjectDisposedException) { } catch (AggregateException) { } }
+            try { if (proxy != null) proxy.CloseAsync().GetAwaiter().GetResult(); }
+            finally { try { if (active != null) active.Dispose(); } finally { if (pending != null) pending.Dispose(); } }
         }
 
         private sealed class SshReadOnlySession : IReadOnlyRouterSession

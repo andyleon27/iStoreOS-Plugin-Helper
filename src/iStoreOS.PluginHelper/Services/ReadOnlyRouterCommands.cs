@@ -27,8 +27,12 @@ namespace iStoreOS.PluginHelper.Services
                 case RouterProbe.OsRelease: return "cat /etc/os-release";
                 case RouterProbe.OpenWrtRelease: return "cat /etc/openwrt_release";
                 case RouterProbe.PackageManager:
-                    return "if test -f /etc/apk/repositories.d/distfeeds.list; then printf 'APK'; " +
-                           "elif test -f /etc/opkg/distfeeds.conf; then printf 'OPKG'; else printf 'Unknown'; fi";
+                    return "if command -v apk >/dev/null 2>&1 && { test -s /lib/apk/db/installed || test -s /lib/apk/db/installed.adb; }; then printf 'APK'; " +
+                           "elif command -v opkg >/dev/null 2>&1 && test -s /usr/lib/opkg/status; then printf 'OPKG'; " +
+                           "elif command -v apk >/dev/null 2>&1 && test -f /etc/apk/repositories.d/distfeeds.list; then printf 'APK'; " +
+                           "elif command -v opkg >/dev/null 2>&1 && test -f /etc/opkg/distfeeds.conf; then printf 'OPKG'; " +
+                           "elif command -v apk >/dev/null 2>&1 && ! command -v opkg >/dev/null 2>&1; then printf 'APK'; " +
+                           "elif command -v opkg >/dev/null 2>&1 && ! command -v apk >/dev/null 2>&1; then printf 'OPKG'; else printf 'Unknown'; fi";
                 case RouterProbe.QuickStartSources:
                     return HttpGet("http://127.0.0.1:3038/cgi-bin/luci/istore/guide/soft-source/list/");
                 case RouterProbe.QuickStartCurrentSource:

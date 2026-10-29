@@ -21,15 +21,30 @@
     <Compile Include="RunnerSmoke.cs" />
     <Compile Include="SoftwareTests.cs" />
     <Compile Include="InstallationTests.cs" />
+    <Compile Include="NativePackageTests.cs" />
     <Compile Include="UiTests.cs" />
+    <Compile Include="ConnectionToggleTests.cs" />
+    <Compile Include="ComputerProxyTunnelTests.cs" />
+    <Compile Include="MaintenanceLaunchTests.cs" />
     <Compile Include="WorkflowTests.cs" />
     <Compile Include="WorkflowSourceTests.cs" />
+    <Compile Include="WorkflowSourceRetentionTests.cs" />
     <Compile Include="WorkflowPerformanceTests.cs" />
     <Compile Include="PersistentPollTests.cs" />
     <Compile Include="SnapshotLoggingTests.cs" />
     <Compile Include="CompactUiTests.cs" />
     <Compile Include="RoundedUiTests.cs" />
     <Compile Include="AdvancedUiTests.cs" />
+    <Compile Include="MaintenanceHttpDiagnosticsTests.cs" />
+    <Compile Include="MaintenanceCleanupTests.cs" />
+    <Compile Include="MaintenanceMenuPreparationTests.cs" />
+    <Compile Include="MaintenanceMenuRuntimeTests.cs" />
+    <Compile Include="MaintenanceMenuSshTests.cs" />
+    <Compile Include="MaintenanceMenuWindowTests.cs" />
+    <Compile Include="TerminalFakeShell.cs" />
+    <Compile Include="MaintenanceTerminalTests.cs" />
+    <Compile Include="TerminalDisplayTests.cs" />
+    <Compile Include="MaintenanceTerminalInteractionTests.cs" />
     <ProjectReference Include="..\..\src\iStoreOS.PluginHelper\iStoreOS.PluginHelper.csproj">
       <Project>{10E72BE9-EC40-4471-A2ED-8BDF2A112B52}</Project><Name>iStoreOS.PluginHelper</Name>
     </ProjectReference>

@@ -9,6 +9,11 @@ namespace iStoreOS.PluginHelper.Services
 {
     public sealed class SoftwareSourceService
     {
+        public static bool MatchesMirror(SoftwareSourceInfo source, IList<RepositoryFeed> feeds)
+        {
+            Uri mirror; if (source == null || !Uri.TryCreate(source.Url, UriKind.Absolute, out mirror) || feeds.Count == 0) return false;
+            return feeds.All(feed => { Uri index; return Uri.TryCreate(feed.IndexUrl, UriKind.Absolute, out index) && index.Scheme == mirror.Scheme && index.Host == mirror.Host && index.Port == mirror.Port && index.AbsolutePath.StartsWith(mirror.AbsolutePath.TrimEnd('/') + "/", StringComparison.Ordinal); });
+        }
         public SoftwareSourceSnapshot Read(ISoftwareSourceSession session, PackageManagerKind manager, Action<string> log)
         {
             string path = SoftwareSourceCommands.DistfeedsPath(manager);

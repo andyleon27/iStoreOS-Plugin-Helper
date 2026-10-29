@@ -46,7 +46,7 @@ namespace iStoreOS.PluginHelper.Tests
                     f.BadHosts.Add("old.test"); f.candidates = f.candidates.Concat(new[] { Source("OldAlias", "https://OLD.TEST:443/openwrt") }).ToArray();
                 }, (r, f) => { Equal(1, Count(f, "old.test")); Equal(1, f.CandidateReads); Equal(6, f.Probes); });
                 SourceCase(test, manager, "switched full source has no repeated HTTP requests", f => f.BadHosts.Add("old.test"), (r, f) => {
-                    Equal(1, f.UpdateCalls); Equal(5, Count(f, "a.test")); Equal(1, f.Starts); True(r.SourceRestored);
+                    Equal(1, f.UpdateCalls); Equal(5, Count(f, "a.test")); Equal(1, f.Starts); True(r.SourceRetained); Equal(0, f.Restores);
                 });
                 SourceCase(test, manager, "identity mismatch blocks update and dispatch", f => {
                     f.BadHosts.Add("old.test"); f.SwitchKeepsOldIdentity = true;

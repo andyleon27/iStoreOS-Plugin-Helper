@@ -1,10 +1,14 @@
 namespace iStoreOS.PluginHelper.Models
 {
     public enum CompatibilityStatus { Unknown, Compatible, Incompatible }
+    public enum LocalPackageFormat { Run, Ipk, Apk }
 
     public sealed class PluginPackageInfo
     {
         public string FilePath { get; set; }
+        public LocalPackageFormat Format { get; set; }
+        public bool MetadataRead { get; set; }
+        public long? InstalledBytes { get; set; }
         public string FileName { get; set; }
         public long FileSize { get; set; }
         public string PluginName { get; set; }

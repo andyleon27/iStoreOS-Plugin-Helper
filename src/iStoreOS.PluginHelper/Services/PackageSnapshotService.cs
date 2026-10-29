@@ -57,6 +57,7 @@ namespace iStoreOS.PluginHelper.Services
     {
         public static string KnownMainPackage(PluginPackageInfo plugin)
         {
+            if (plugin.Format != LocalPackageFormat.Run && plugin.MetadataRead) return plugin.PluginName;
             if (string.Equals(plugin.PluginName, "PassWall", StringComparison.OrdinalIgnoreCase)) return "luci-app-passwall";
             if (string.Equals(plugin.PluginName, "OpenClash", StringComparison.OrdinalIgnoreCase)) return "luci-app-openclash";
             return null;
@@ -81,7 +82,9 @@ namespace iStoreOS.PluginHelper.Services
             result.Verified = name != null && after.Packages.TryGetValue(name, out version) && independentQuery(name);
             if (result.Verified) result.Version = after.Packages[name];
             bool versionMismatch = false;
-            if (result.Verified && strong)
+            if (result.Verified && plugin.Format != LocalPackageFormat.Run)
+            { if (!string.Equals(result.Version, plugin.PluginVersion, StringComparison.Ordinal)) { result.Verified = false; versionMismatch = true; } }
+            else if (result.Verified && strong)
             {
                 Match expected = Regex.Match(plugin.PluginVersion ?? "", @"\Av?(\d+(?:\.\d+)+)(?:\z|[-_+])");
                 Match actual = Regex.Match(result.Version, @"\Av?(\d+(?:\.\d+)+)(?:\z|[-_+])");
