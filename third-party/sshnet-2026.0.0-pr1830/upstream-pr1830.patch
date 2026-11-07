@@ -1,0 +1,44 @@
+From f099365c9d4cf2ade92b92c203bbb2b345d2cd74 Mon Sep 17 00:00:00 2001
+From: Scott Xu <scott-xu@msn.com>
+Date: Tue, 1 Sep 2026 20:38:30 +0800
+Subject: [PATCH] Reset MAC after TransformFinalBlock on .NET Framework in
+ Session.cs (#1830)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add `#if NETFRAMEWORK` block to call `_serverMac.Initialize()` after `TransformFinalBlock` in `ReceiveMessage`. Ensures MAC is reset for reuse, addressing issues on older .NET Framework builds (e.g., mscorlib.dll 4.8.4110.0).
+
+Co-authored-by: Wojciech Nagórski <wojtpl2@gmail.com>
+---
+ src/Renci.SshNet/Session.cs | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/src/Renci.SshNet/Session.cs b/src/Renci.SshNet/Session.cs
+index a17461a1d..f01756e10 100644
+--- a/src/Renci.SshNet/Session.cs
++++ b/src/Renci.SshNet/Session.cs
+@@ -1327,6 +1327,11 @@ private Message ReceiveMessage(Socket socket)
+                 {
+                     throw new SshConnectionException("MAC error", DisconnectReason.MacError);
+                 }
++#if NETFRAMEWORK
++                // Ensure MAC is reset so that it can be reused for the next packet
++                // It is only required for certain older .NET Framework builds, e.g., mscorlib.dll version 4.8.4110.0
++                _serverMac.Initialize();
++#endif
+             }
+ 
+             var numberOfBytesToDecrypt = 4 + packetLength - blockSize;
+@@ -1374,6 +1379,11 @@ private Message ReceiveMessage(Socket socket)
+                 {
+                     throw new SshConnectionException("MAC error", DisconnectReason.MacError);
+                 }
++#if NETFRAMEWORK
++                // Ensure MAC is reset so that it can be reused for the next packet
++                // It is only required for certain older .NET Framework builds, e.g., mscorlib.dll version 4.8.4110.0
++                _serverMac.Initialize();
++#endif
+             }
+ 
+             var paddingLength = _receiveBuffer.ActiveReadOnlySpan[packetLengthFieldLength];

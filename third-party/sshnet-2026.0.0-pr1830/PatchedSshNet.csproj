@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Build-only wrapper. All runtime source comes from the pinned upstream archive + official PR. -->
+  <PropertyGroup>
+    <TargetFramework>net462</TargetFramework>
+    <AssemblyName>Renci.SshNet</AssemblyName>
+    <RootNamespace>Renci.SshNet</RootNamespace>
+    <LangVersion>14.0</LangVersion>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <Deterministic>true</Deterministic>
+    <PathMap>$(SshNetSource)=/_/sshnet,$(SshNetBuildRoot)=/_/build,$(MSBuildThisFileDirectory)=/_/definition</PathMap>
+    <PathMap Condition="'$(SshNetPolyfills)' != ''">$(PathMap),$(SshNetPolyfills)=/_/polyfills</PathMap>
+    <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <AssemblyVersion>2026.0.0.1</AssemblyVersion>
+    <FileVersion>2026.0.0.1</FileVersion>
+    <InformationalVersion>2026.0.0.1+7b2fd3dbf2.pr1830.f099365c9d</InformationalVersion>
+    <Title>SSH.NET</Title>
+    <Product>SSH.NET</Product>
+    <Copyright>Copyright (c) Renci 2010-2026</Copyright>
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>$(SshNetSource)/Renci.SshNet.snk</AssemblyOriginatorKeyFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <DebugType>portable</DebugType>
+    <WarningLevel>9999</WarningLevel>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CS8602;CS8604;CS8777</NoWarn>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="BuildVersion.cs" />
+    <Compile Include="$(SshNetPolyfills)/**/*.cs" Condition="'$(SshNetPolyfills)' != ''" />
+    <Compile Include="$(SshNetSource)/src/Renci.SshNet/**/*.cs" Exclude="$(SshNetSource)/src/Renci.SshNet/obj/**;$(SshNetSource)/src/Renci.SshNet/bin/**" />
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.3" />
+    <PackageReference Include="Microsoft.Bcl.Cryptography" Version="10.0.10" />
+    <PackageReference Include="PolySharp" Version="1.16.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net462" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+  <Target Name="UseFrozenPolyfills" BeforeTargets="CoreCompile" Condition="'$(SshNetPolyfills)' != ''">
+    <!-- PolySharp 1.16 emits files in HashSet iteration order. Freeze/sort generated files before
+         final compilation so process hash randomization cannot change metadata order or DLL bytes. -->
+    <ItemGroup><Analyzer Remove="@(Analyzer)" /></ItemGroup>
+  </Target>
+</Project>

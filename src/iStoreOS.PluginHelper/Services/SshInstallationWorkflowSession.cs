@@ -15,16 +15,17 @@ namespace iStoreOS.PluginHelper.Services
         private readonly Func<SshClient> active;
         private readonly Func<RouterEnvironment, bool, Action<string>, CancellationToken, RouterEnvironment> connect;
         private readonly Func<SftpClient> transfer;
+        private readonly Func<ScpClient> scp;
         private readonly Func<string, string> redact;
         public SshInstallationWorkflowSession(Func<SshClient> active,
             Func<RouterEnvironment, bool, Action<string>, CancellationToken, RouterEnvironment> connect,
-            Func<SftpClient> transfer, Func<string, string> redact)
-        { this.active = active; this.connect = connect; this.transfer = transfer; this.redact = redact; }
+            Func<SftpClient> transfer, Func<ScpClient> scp, Func<string, string> redact)
+        { this.active = active; this.connect = connect; this.transfer = transfer; this.scp = scp; this.redact = redact; }
         public bool IsConnected { get { var client = active(); return client != null && client.IsConnected; } }
         public string Sanitize(string text) { return redact(text ?? ""); }
         public RouterEnvironment ConnectAndDetect(RouterEnvironment expected, bool force, Action<string> log, CancellationToken token)
         { return connect(expected, force, log, token); }
-        public IPluginInstallSession Installer { get { return new SshPluginInstallSession(active(), transfer, redact); } }
+        public IPluginInstallSession Installer { get { return new SshPluginInstallSession(active, transfer, scp, redact); } }
         public ISoftwareSourceSession Sources { get { return new SshSoftwareSourceSession(active(), redact); } }
         private ProbeResult Execute(string text, int seconds)
         {

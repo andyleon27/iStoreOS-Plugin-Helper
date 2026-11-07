@@ -5,6 +5,11 @@ using iStoreOS.PluginHelper.Models;
 
 namespace iStoreOS.PluginHelper.Services
 {
+    internal interface IInstallationUploadSession
+    {
+        void Upload(Stream source, RemoteTempSession session, Action<long> progress, Action<string> log, CancellationToken token);
+    }
+
     // Typed operations keep router writes confined to this session and the original installer.
     public interface IPluginInstallSession
     {

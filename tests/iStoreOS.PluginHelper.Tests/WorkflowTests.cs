@@ -123,7 +123,7 @@ namespace iStoreOS.PluginHelper.Tests
             Case(test, "unknown update is retryable but cannot rotate", f => f.Updates.Enqueue(new PackageUpdateResult { ExitCode = 1, Stderr = "unknown database error" }), (r, f) => { Equal(InstallationFailureKind.UpdateFailure, r.Failure.Kind); Equal(0, f.Starts); Equal(0, f.Switches.Count); });
             Case(test, "hash changes after initial check still blocks dispatch", f => f.CorruptBeforeDispatch = true, (r, f) => { Equal(InstallationFailureKind.Integrity, r.Failure.Kind); Equal(0, f.Starts); Equal(false, r.PendingInstaller); True(r.Installation.CleanupSucceeded); });
             Case(test, "busy immediately before dispatch blocks legacy premarked launch", f => f.BusyAfterCheck = true, (r, f) => { Equal(InstallationFailureKind.PackageManagerBusy, r.Failure.Kind); Equal(0, f.Starts); Equal(false, r.PendingInstaller); True(r.Installation.CleanupSucceeded); });
-            Case(test, "missing router hash allows initial fallback but never automatic rerun", f => { f.HashUnavailable = true; f.Runs.Enqueue(new Outcome { Exit = 1, Log = FailureUrl("old.test") }); }, (r, f) => { Equal(1, f.Starts); Equal(0, f.Switches.Count); });
+            Case(test, "missing router hash blocks initial upload verification", f => { f.HashUnavailable = true; f.Runs.Enqueue(new Outcome { Exit = 1, Log = FailureUrl("old.test") }); }, (r, f) => { Equal(0, f.Starts); Equal(0, f.Switches.Count); Equal(InstallStatus.FailedIntegrity, r.Installation.Status); });
             Case(test, "duplicate mirrors cannot increase attempt ceiling", f => { f.DuplicateCandidates = true; foreach (string host in new[] { "old.test", "a.test", "b.test" }) f.Runs.Enqueue(new Outcome { Exit = 1, Log = FailureUrl(host) }); }, (r, f) => { Equal(3, f.Starts); Equal(2, f.Switches.Count); Equal(InstallationFailureKind.MirrorsExhausted, r.Failure.Kind); });
             test("V0.3.2 failed restoration cannot become next original baseline", () => Fixture(Name, path => {
                 var f = new Fake { RestoreFailure = true }; f.BadHosts.Add("old.test"); f.Runs.Enqueue(new Outcome { Exit = 2, Log = "syntax error" }); var service = Service(); Equal(InstallationFailureKind.InstallerScript, Run(service, f, path).Failure.Kind); int starts = f.Starts;
@@ -192,7 +192,7 @@ namespace iStoreOS.PluginHelper.Tests
             });
             Case(test, "foreign unresolved runner prevents any new dispatch", f => f.ForeignRunner = true, (r, f) => { Equal(InstallationFailureKind.PackageManagerBusy, r.Failure.Kind); Equal(0, f.Starts); Equal(0, f.Cleanups); True(r.Failure.Evidence.Contains("旧安装")); });
             test("V0.3.2 deliberate retry also requires remote SHA and does not blame missing capability on corrupt file", () => Fixture(Name, path => {
-                var f = new Fake { HashUnavailable = true }; f.Runs.Enqueue(new Outcome { Exit = 1, Log = FailureUrl("old.test") }); var service = Service(); Equal(1, Run(service, f, path).Attempts.Count);
+                var f = new Fake(); f.Runs.Enqueue(new Outcome { Exit = 2, Log = "syntax error" }); var service = Service(); Equal(1, Run(service, f, path).Attempts.Count); f.HashUnavailable = true;
                 var second = Run(service, f, path); Equal(InstallationFailureKind.HashUnavailable, second.Failure.Kind); Equal(1, f.Starts); Equal(false, second.Failure.UserMessage.Contains("损坏"));
             }));
         }

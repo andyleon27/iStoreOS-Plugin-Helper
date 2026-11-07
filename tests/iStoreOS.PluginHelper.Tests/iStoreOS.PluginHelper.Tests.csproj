@@ -21,6 +21,9 @@
     <Compile Include="RunnerSmoke.cs" />
     <Compile Include="SoftwareTests.cs" />
     <Compile Include="InstallationTests.cs" />
+    <Compile Include="InstallationUploadTests.cs" />
+    <Compile Include="SshInstallerMonitorTests.cs" />
+    <Compile Include="SshProtocolTests.cs" />
     <Compile Include="NativePackageTests.cs" />
     <Compile Include="UiTests.cs" />
     <Compile Include="ConnectionToggleTests.cs" />

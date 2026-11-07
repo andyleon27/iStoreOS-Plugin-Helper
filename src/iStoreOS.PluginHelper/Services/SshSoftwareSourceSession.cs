@@ -43,8 +43,9 @@ namespace iStoreOS.PluginHelper.Services
                     string output = command.Execute(); object status = command.ExitStatus;
                     return new PackageUpdateResult { ExitCode = status == null ? -1 : Convert.ToInt32(status), Stdout = output, Stderr = command.Error };
                 }
-                catch (SshOperationTimeoutException)
+                catch (SshOperationTimeoutException exception)
                 {
+                    SshConnectionFactory.Failure(ssh, exception);
                     return new PackageUpdateResult { ExitCode = -1, TimedOut = true, Stdout = command.Result,
                         Stderr = (command.Error ?? "") + "\nPackage update timeout（SSH 命令上限 125 秒）。" };
                 }
@@ -60,12 +61,12 @@ namespace iStoreOS.PluginHelper.Services
         public ProbeResult RestoreBackup(PackageManagerKind manager, string backupPath) { return Execute(SoftwareSourceCommands.RestoreBackup(manager, backupPath), 8); }
         private ProbeResult Execute(string commandText, int seconds)
         {
-            using (SshCommand command = ssh.CreateCommand(commandText))
+            try { using (SshCommand command = ssh.CreateCommand(commandText))
             {
                 command.CommandTimeout = TimeSpan.FromSeconds(seconds);
                 string output = command.Execute(); object status = command.ExitStatus;
                 return new ProbeResult { ExitStatus = status == null ? -1 : Convert.ToInt32(status), Output = output, Error = command.Error };
-            }
+            } } catch (Exception error) { SshConnectionFactory.Failure(ssh, error); throw; }
         }
     }
 }

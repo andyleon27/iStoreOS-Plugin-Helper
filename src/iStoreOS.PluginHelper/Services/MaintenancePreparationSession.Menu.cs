@@ -13,11 +13,13 @@ namespace iStoreOS.PluginHelper.Services
             return Task.Run<IShellTransport>(() => {
                 token.ThrowIfCancellationRequested();
                 if (!IsConnected) throw new IOException("SSH 已断开，无法创建菜单 PTY。");
-                var shell = ssh.CreateShellStream("xterm-256color", columns, rows, 0, 0, 8192);
+                Renci.SshNet.ShellStream shell;
+                try { shell = ssh.CreateShellStream("xterm-256color", columns, rows, 0, 0, 8192); }
+                catch (Exception error) { SshConnectionFactory.Failure(ssh, error); throw; }
                 try
                 {
                     var transport = new SshShellTransport(shell, (width, height) => shell.ChangeWindowSize(width, height, 0, 0), () => IsConnected);
-                    shell.ErrorOccurred += (sender, args) => transport.ReportFailure(args.Exception);
+                    shell.ErrorOccurred += (sender, args) => { SshConnectionFactory.Failure(ssh, args.Exception); transport.ReportFailure(args.Exception); };
                     token.ThrowIfCancellationRequested();
                     return transport;
                 }

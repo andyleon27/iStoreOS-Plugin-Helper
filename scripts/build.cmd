@@ -8,6 +8,11 @@ if not exist "packages\SSH.NET.2026.0.0\lib\net462\Renci.SshNet.dll" (
 )
 if not exist ".tools\tmp" mkdir ".tools\tmp"
 if not exist "artifacts" mkdir "artifacts"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\verify-sshnet-patched.ps1
+if errorlevel 1 (
+  popd
+  exit /b 1
+)
 rem Scope these variables to this build process. Braces in a sandbox TEMP path break old MSBuild.
 set "TEMP=%CD%\.tools\tmp"
 set "TMP=%TEMP%"

@@ -11,6 +11,8 @@ namespace iStoreOS.PluginHelper.Services
         public string Id { get; private set; }
         public string Directory { get { return Root + "/" + Id; } }
         public LocalPackageFormat Format { get; private set; }
+        // Evidence belongs to this operation, survives fresh adapters/reconnection, and never crosses devices.
+        internal bool SftpUnavailable { get; set; }
         public string PackageFileName { get { return Format == LocalPackageFormat.Ipk ? "package.ipk" : Format == LocalPackageFormat.Apk ? "package.apk" : "package.run"; } }
         public string RunPath { get { return Directory + "/" + PackageFileName; } }
         private RemoteTempSession(string id) { Id = id; ValidateDirectory(Directory); }
@@ -50,6 +52,10 @@ namespace iStoreOS.PluginHelper.Services
     {
         public const string RunnerCheck = "if ! (trap '' HUP); then printf 'Cannot ignore SIGHUP with shell trap\\n' >&2; exit 1; fi; printf 'ISTORE_RUNNER_READY\\n'";
         public const string TmpSpace = "LC_ALL=C df -Pk /tmp";
+        public static string ScpTargetCheck(RemoteTempSession s)
+        { return "test ! -L " + ShellArgument.Quote(RemoteTempSession.Root) + " && test ! -L " + ShellArgument.Quote(s.Directory) + " && test -d " + ShellArgument.Quote(s.Directory) + " && test ! -e " + s.File(s.PackageFileName) + " && test ! -L " + s.File(s.PackageFileName); }
+        public static string UploadedFileCheck(RemoteTempSession s)
+        { return "{ test ! -L " + ShellArgument.Quote(RemoteTempSession.Root) + " && test ! -L " + ShellArgument.Quote(s.Directory) + " && test ! -L " + s.File(s.PackageFileName) + "; } || exit 2; if test -f " + s.File(s.PackageFileName) + "; then exit 0; elif test ! -e " + s.File(s.PackageFileName) + "; then exit 44; else exit 2; fi"; }
         public static string FileSize(RemoteTempSession s) { return "wc -c < " + s.File(s.PackageFileName); }
         public static string Hash(RemoteTempSession s)
         { return "if command -v sha256sum >/dev/null 2>&1; then sha256sum " + s.File(s.PackageFileName) + "; else exit 127; fi"; }

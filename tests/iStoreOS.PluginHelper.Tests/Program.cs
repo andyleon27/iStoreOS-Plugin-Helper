@@ -27,6 +27,21 @@ namespace iStoreOS.PluginHelper.Tests
         {
             if (args.Length == 1 && args[0] == "--runner-smoke") return RunnerSmoke.RunInteractive();
             Console.OutputEncoding = System.Text.Encoding.UTF8;
+            if (args.Length == 1 && args[0] == "--ssh-protocol-only")
+            {
+                SshProtocolTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed"); return failed == 0 ? 0 : 1;
+            }
+            if (args.Length == 1 && args[0] == "--ssh-installer-monitor-only")
+            {
+                SshInstallerMonitorTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed"); return failed == 0 ? 0 : 1;
+            }
+            if (args.Length == 1 && args[0] == "--installation-upload-only")
+            {
+                InstallationUploadTests.Run(Run);
+                Console.WriteLine("RESULT: " + passed + " passed, " + failed + " failed"); return failed == 0 ? 0 : 1;
+            }
             if (args.Length == 1 && args[0] == "--maintenance-cleanup-only")
             {
                 Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
@@ -276,6 +291,9 @@ namespace iStoreOS.PluginHelper.Tests
             RunnerSmoke.RunTests(Run);
             SoftwareTests.Run(Run);
             InstallationTests.Run(Run);
+            InstallationUploadTests.Run(Run);
+            SshInstallerMonitorTests.Run(Run);
+            SshProtocolTests.Run(Run);
             NativePackageTests.Run(Run);
             UiTests.Run(Run);
             WorkflowTests.Run(Run);
@@ -327,7 +345,7 @@ namespace iStoreOS.PluginHelper.Tests
             using (var form = new MainForm())
             {
                 form.Show(); Application.DoEvents();
-                Equal("iStoreOS 插件安装助手 V1.1.0", form.Text);
+                Equal("iStoreOS 插件安装助手 V1.1.1", form.Text);
                 True(((TextBox)UiTests.Control(form, "passwordBox")).PasswordChar != '\0');
                 True(((RichTextBox)UiTests.Control(form, "logBox")).ReadOnly);
                 True(UiTests.Control(form, "dropLabel").AllowDrop);

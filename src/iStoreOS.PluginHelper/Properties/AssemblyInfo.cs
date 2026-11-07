@@ -4,7 +4,7 @@ using System.Runtime.CompilerServices;
 using iStoreOS.PluginHelper.Utilities;
 
 [assembly: AssemblyTitle(ProductInfo.WindowTitle)]
-[assembly: AssemblyDescription("iStoreOS 本地 .run / .ipk / .apk 安装与终端插件维护助手 V1.1.0")]
+[assembly: AssemblyDescription("iStoreOS 本地 .run / .ipk / .apk 安装与终端插件维护助手 V1.1.1")]
 [assembly: AssemblyProduct("iStoreOS Plugin Helper")]
 [assembly: AssemblyVersion(ProductInfo.WindowsVersion)]
 [assembly: AssemblyFileVersion(ProductInfo.FileVersion)]

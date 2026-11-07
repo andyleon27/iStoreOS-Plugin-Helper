@@ -16,6 +16,7 @@ namespace iStoreOS.PluginHelper.Services
         internal Func<PasswordConnectionInfo> Authentication;
         internal Func<byte[], bool> TrustHostKey;
         internal Func<bool> IsCurrent;
+        internal Action<string> Log;
     }
     internal sealed class SshComputerProxyTunnelSession : IComputerProxyTunnelSession
     {
@@ -53,11 +54,10 @@ namespace iStoreOS.PluginHelper.Services
             settings = candidate;
             if (!string.Equals(settings.Host, context.Endpoint.DeviceHost, StringComparison.OrdinalIgnoreCase) || settings.Port != context.Endpoint.DevicePort || settings.Username != context.Account)
                 throw new InvalidOperationException("Secondary device/account mismatch.");
-            settings.Timeout = TimeSpan.FromSeconds(10);
-            secondary = new SshClient(settings) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
-            secondary.HostKeyReceived += (s, e) => { e.CanTrust = context != null && context.TrustHostKey(e.HostKey); hostKeyValidated = e.CanTrust; };
+            secondary = SshConnectionFactory.Ssh(settings, "电脑代理 SSH #2", context.Log);
+            SshConnectionFactory.Trust(secondary, key => context != null && context.TrustHostKey(key), accepted => hostKeyValidated = accepted);
             secondary.ErrorOccurred += SecondaryError; secondaryMayBeConnected = true;
-            await secondary.ConnectAsync(token).ConfigureAwait(false);
+            await SshConnectionFactory.ConnectAsync(secondary, token).ConfigureAwait(false);
             if (!hostKeyValidated || !secondary.IsConnected) throw new SshConnectionException("Secondary identity was not confirmed.");
         }
         public Task StartForwardAsync(int localProxyPort, CancellationToken token)
@@ -67,7 +67,8 @@ namespace iStoreOS.PluginHelper.Services
                 token.ThrowIfCancellationRequested();
                 if (!hostKeyValidated || !Connected(secondary) || forward != null) throw new InvalidOperationException("Trusted secondary required.");
                 forward = new ForwardedPortRemote(System.Net.IPAddress.Loopback, ComputerProxyPolicy.RemotePort, System.Net.IPAddress.Loopback, (uint)localProxyPort);
-                secondary.AddForwardedPort(forward); forward.Start(); token.ThrowIfCancellationRequested();
+                try { secondary.AddForwardedPort(forward); forward.Start(); token.ThrowIfCancellationRequested(); }
+                catch (Exception error) { SshConnectionFactory.Failure(secondary, error); throw; }
             });
         }
         public Task CloseSecondaryAsync() { return Task.Run((Action)CloseOwned); }

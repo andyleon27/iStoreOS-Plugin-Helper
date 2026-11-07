@@ -9,16 +9,20 @@ namespace iStoreOS.PluginHelper.Services
     public interface IConnectedInstallerFileSession : IInstallerFileSession { bool IsConnected { get; } }
     public interface IInstallerMonitoringSession { IDisposable OpenInstallerMonitor(RemoteTempSession session); }
     public interface IInstallerMonitorStatistics { int ConnectionCount { get; } }
+    internal interface IInstallerMonitorInfo { string Description { get; } bool UsesSftp { get; } }
     public static class InstallerMonitoring
     {
         private sealed class EmptyScope : IDisposable { public void Dispose() { } }
         public static IDisposable Open(IPluginInstallSession session, RemoteTempSession remote)
         { var monitored = session as IInstallerMonitoringSession; return monitored == null ? new EmptyScope() : monitored.OpenInstallerMonitor(remote); }
-        internal static IDisposable ReleaseOnDispose(IDisposable scope, Action release) { return new Lease(scope, release); }
-        private sealed class Lease : IDisposable, IInstallerMonitorStatistics
+        internal static IDisposable ReleaseOnDispose(IDisposable scope, Action release, string description = null, bool usesSftp = true) { return new Lease(scope, release, description, usesSftp); }
+        private sealed class Lease : IDisposable, IInstallerMonitorStatistics, IInstallerMonitorInfo
         {
             private readonly IDisposable scope; private readonly Action release; private bool disposed;
-            public Lease(IDisposable scope, Action release) { this.scope = scope; this.release = release; }
+            private readonly string description; private readonly bool usesSftp;
+            public Lease(IDisposable scope, Action release, string description, bool usesSftp) { this.scope = scope; this.release = release; this.description = description; this.usesSftp = usesSftp; }
+            public string Description { get { var info = scope as IInstallerMonitorInfo; return description ?? (info == null ? null : info.Description); } }
+            public bool UsesSftp { get { var info = scope as IInstallerMonitorInfo; return info == null ? usesSftp : info.UsesSftp; } }
             public int ConnectionCount { get { var statistics = scope as IInstallerMonitorStatistics; return statistics == null ? 0 : statistics.ConnectionCount; } }
             public void Dispose() { if (disposed) return; disposed = true; try { scope.Dispose(); } finally { release(); } }
         }

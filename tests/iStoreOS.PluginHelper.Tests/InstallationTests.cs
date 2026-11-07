@@ -94,8 +94,8 @@ namespace iStoreOS.PluginHelper.Tests
             { Equal(InstallStatus.FailedIntegrity, r.Status); Equal(0, f.Inspections); Equal(0, f.Starts); Equal(1, f.Cleanups); });
             WithWorkflow(test, "remote size mismatch stops before SHA", fake => fake.SizeMismatch = true, (r, f) =>
             { Equal(InstallStatus.FailedIntegrity, r.Status); Equal(0, f.HashReads); Equal(0, f.Starts); True(r.CleanupSucceeded); });
-            WithWorkflow(test, "missing sha256sum uses size and Makeself fallback", fake => fake.HashUnavailable = true, (r, f) =>
-            { Equal(InstallStatus.SuccessVerified, r.Status); True(r.Warnings.Any(w => w.Contains("sha256sum"))); Equal(2, f.Inspections); });
+            WithWorkflow(test, "missing sha256sum blocks all local package uploads", fake => fake.HashUnavailable = true, (r, f) =>
+            { Equal(InstallStatus.FailedIntegrity, r.Status); True(r.Message.Contains("sha256sum")); Equal(0, f.Inspections); Equal(0, f.Starts); True(r.CleanupSucceeded); });
             WithWorkflow(test, "Makeself check nonzero blocks launch", fake => fake.CheckResult = new ProbeResult { ExitStatus = 2, Error = "checksum mismatch" }, (r, f) =>
             { Equal(InstallStatus.FailedIntegrity, r.Status); Equal(0, f.Starts); True(r.CleanupSucceeded); });
             WithWorkflow(test, "Makeself zero without integrity evidence blocks launch", fake => fake.CheckResult = new ProbeResult { ExitStatus = 0, Output = "nothing checked" }, (r, f) =>

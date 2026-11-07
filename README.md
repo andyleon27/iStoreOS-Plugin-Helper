@@ -1,8 +1,15 @@
-# iStoreOS 插件安装助手 V1.1.0
+# iStoreOS 插件安装助手 V1.1.1
 
 Windows 下用于辅助安装本地 `.run`、`.ipk`、`.apk` 软件包，并通过原项目菜单终端维护 iStoreOS 插件的开源工具。
 
-当前内部版本：**V1.1.0（1.1.0）**，AssemblyVersion / FileVersion 为 **1.1.0.0**。本地发布包已准备，尚未提交、创建 Tag 或发布 GitHub Release。项目自有源码采用 **MIT License**。
+当前版本：**V1.1.1（1.1.1）**，AssemblyVersion / FileVersion 为 **1.1.1.0**。V1.1.1 是兼容性修复版本，保留 V1.1.0 的本地安装、插件维护终端和电脑代理功能。项目自有源码采用 **MIT License**。
+
+## V1.1.1 主要修复
+
+- 部分精简 OpenWrt / ImmortalWrt 固件没有 SFTP subsystem 时，本地 `.run` / `.ipk` / `.apk` 共用安全 SCP fallback，不需要额外安装 `openssh-sftp-server`。SFTP 可用时继续使用原路径；认证、Host Key、网络或超时失败不会触发 fallback。
+- 已明确确认设备无 SFTP 时，安装监测通过已有受信任 SSH 增量读取 stdout / stderr / exit.code；远端大小、SHA256、包快照、独立结果验证和清理继续执行。未知退出状态不会判为成功。
+- 基于 SSH.NET 2026.0.0 合入官方 [Issue #1829](https://github.com/sshnet/SSH.NET/issues/1829) / [PR #1830](https://github.com/sshnet/SSH.NET/pull/1830) 的已合并修复，解决部分 Windows / .NET Framework 环境的 `MAC error`。patched DLL 可重复构建。
+- 增强 SSH 错误分类和 Server / KEX / HostKey / Cipher / MAC / Compression 协商日志；未加入 ssh-dss、MD5 MAC、截短 MAC 等弱算法，也未改变现有算法优先级。
 
 ## 验收范围
 
@@ -14,7 +21,7 @@ Windows 下用于辅助安装本地 `.run`、`.ipk`、`.apk` 软件包，并通�
 | 插件维护终端 | **已完成 N1 实机验收** |
 | 电脑代理模式 | **已完成 N1 实机验收** |
 
-实机结论依据用户在 V1.1 发布收尾时的明确确认；本轮执行版本 / 文案收尾、Release 构建、离线总回归及打包，未重新运行设备安装。不推断未提供的包名、耗时或故障测试结果。历史 APK 设备运行 `.run` 的成功记录，不等同于本地 `.apk` 已通过实机安装验收。
+上表实机结论沿用 V1.1.0 的用户确认。V1.1.1 RC1 已完成真实用户测试，用户确认此前主要问题基本解决；没有据此扩展未提供的逐设备、包格式或故障场景验收结论。本次正式版本只更新必要版本信息并重新构建、离线回归和打包，未重新操作设备。历史 APK 设备运行 `.run` 的成功记录，不等同于本地 `.apk` 已通过实机安装验收。
 
 ## 本地安装
 
@@ -26,7 +33,7 @@ Windows 下用于辅助安装本地 `.run`、`.ipk`、`.apk` 软件包，并通�
 
 原生包严格匹配设备架构；IPK `all` 和 APK `noarch` 分别作为无关架构，不套用 `.run` 专用 ARM64 映射。支持 gzip/tar、ar IPK，APK v2 gzip 与 APK v3 ADB（未压缩、deflate、zstd）；解析有大小、路径和解码窗口边界。
 
-安装流程复用网络 / DNS / 时间 / 空间与忙状态检查、QuickStart 软件源检测、真实 package update、受信任 SFTP、本地 / 远端 SHA256、前后包快照和独立结果验证。原生包必须通过远端 SHA256，目标包名、完整版本和独立存在性查询均通过才确认成功；依赖、固件 ABI、签名和额外空间继续由设备包管理器校验，不自动添加 `--force-*` 或 `--allow-untrusted`。
+安装流程复用网络 / DNS / 时间 / 空间与忙状态检查、QuickStart 软件源检测、真实 package update、受信任 SFTP（明确无 subsystem 时使用 SCP）、本地 / 远端 SHA256、前后包快照和独立结果验证。三种本地包均须通过远端存在性、大小和 SHA256 检查；原生包的目标包名、完整版本和独立存在性查询均通过才确认成功。依赖、固件 ABI、签名和额外空间继续由设备包管理器校验，不自动添加 `--force-*` 或 `--allow-untrusted`。
 
 当前源异常时才选择可用的官方镜像，成功后保留选中的可用源，失败沿用恢复流程。安装器派发后不取消 / 重复派发；未知状态保留任务目录和安装互斥，重连后优先监测原任务。共用日志统一使用“安装包 / 安装器”，专属校验及真实命令仍准确显示。
 
@@ -44,12 +51,12 @@ SSH 未连接时入口灰色。连接后后台优先检测设备 GitHub Raw 直�
 
 ## 发布文件与使用
 
-本地发布目录：`artifacts/release/v1.1.0/`，包含：
+正式下载：[GitHub Release V1.1.1](https://github.com/andyleon27/iStoreOS-Plugin-Helper/releases/tag/v1.1.1)。本地发布目录：`artifacts/release/v1.1.1/`，包含：
 
-- `iStoreOS.PluginHelper-v1.1.0-win-x64.zip`
+- `iStoreOS.PluginHelper-v1.1.1-win-x64.zip`
 - `SHA256SUMS.txt`
 
-当前尚未创建 V1.1.0 GitHub Release。ZIP 校验值以同目录 SHA256SUMS.txt 为准。
+ZIP 校验值以同目录 SHA256SUMS.txt 为准。升级时完整解压到新目录，避免旧版 DLL 混入。
 
 1. 校验 ZIP 后解压到独立目录，运行 `iStoreOS.PluginHelper.exe`。
 2. 保留 EXE、config、14 个运行时 DLL 和许可证文件。无需安装 Visual Studio、Python、Node.js、PowerShell 或额外 SSH / SCP 客户端。
@@ -62,15 +69,23 @@ SSH 未连接时入口灰色。连接后后台优先检测设备 GitHub Raw 直�
 
 ## 验证、运行环境和诊断
 
-V1.1.0 最终验证：**1184 passed / 0 failed**；Release x64 **0 warning / 0 error**。包括首次安装、IPK/APK、软件源、电脑代理、终端菜单、退出 / 断线和清理边界。实机覆盖范围以开头表格为准，离线测试不扩展实机结论。
+V1.1.1 最终验证：**1431 passed / 0 failed**；Release x64 **0 warnings / 0 errors**。覆盖首次安装、IPK/APK、软件源、SFTP/SCP、无 SFTP SSH monitor、MAC、Host Key、电脑代理、终端菜单、退出 / 断线和清理边界。正式构建及完整回归结果见 [V1.1.1 最终验证报告](docs/V1.1.1-release-final-验证报告.md)。实机覆盖范围以上述用户确认为准，离线测试不扩展实机结论。
 
 推荐 Windows 10 / 11 x64 + .NET Framework 4.8。Windows 7 SP1 x64 是兼容目标，尚未完成专项实机验收。程序未代码签名，可能显示 SmartScreen 提示。
 
-- 密码默认隐藏，不写入磁盘和日志；当前会话在内存保留认证供 SSH / SFTP 使用。
-- 首次连接在本次运行中信任 SSH 指纹；后续连接、SFTP 与代理 SSH #2 必须通过现有 Host Key 信任检查。
+- 密码默认隐藏，不写入磁盘和日志；当前会话在内存保留认证供 SSH / SFTP / SCP 使用。
+- 首次连接在本次运行中信任 SSH 指纹；后续连接、SFTP、SCP 与代理 SSH #2 必须通过现有 Host Key 信任检查。
 - 首页 SSH 已断时不能保证确认远端端口释放；未知菜单 / 安装状态保留任务。关闭终端或隧道不证明所有远端派生操作已停止。
 - 高级信息提供完整日志、Package Diff、结果与复制 / 保存功能。分享前检查其中设备地址、源 URL 和路径等诊断信息。
 
-发布说明：源码工作区见 `docs/release-notes-v1.1.0.md`，便携包见 `RELEASE-NOTES.md`；最终检查见源码中的 `docs/V1.1.0-release-final-验证报告.md`。历史开发报告保留在 docs 中，其旧版本号或待执行步骤不代表当前验收状态。
+发布说明：源码工作区见 [V1.1.1 Release Notes](docs/release-notes-v1.1.1.md)，便携包见 `RELEASE-NOTES.md`；最终检查见源码中的 `docs/V1.1.1-release-final-验证报告.md`。历史开发报告保留在 docs 中，其旧版本号或待执行步骤不代表当前验收状态。
 
 项目自有源码采用 [MIT License](LICENSE)。第三方依赖见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 与随包 licenses/；上游菜单及其下载内容按各自许可证分发。
+
+## SSH 依赖与源码构建
+
+所有正式 SSH、SFTP、SCP、PTY 和电脑代理连接引用同一固定 SSH.NET 2026.0.0 + 官方 #1830 patched DLL，SHA256 为 `31c62881cf8375b47118ab11a620c85d8208ae86b93f418f58ff2c79605ad481`。完整算法支持及兼容性边界见[审计矩阵](docs/V1.1.1-SSH-algorithm-matrix.md)。
+
+普通源码构建仍先运行 `scripts/restore.ps1`，再运行 `scripts/build.cmd`；构建会校验仓库内 patched DLL 的 SHA256 与强名称身份。重建该第三方 DLL 的 SDK、源码 commit、官方补丁、锁定依赖及命令见[SSH.NET 可复现构建说明](third-party/sshnet-2026.0.0-pr1830/README.md)。开发用便携 SDK 放在 `.tools`，用户运行助手仍只需要 .NET Framework 4.8。
+
+V1.1.1 的改动不覆盖插件维护菜单准备中的 SFTP 上传：本次无 SFTP 兼容范围为本地安装链。仅允许库不支持的算法的定制服务器仍可能无法连接；未知错误保留真实诊断，不猜测算法问题或自动接受 Host Key 变化。

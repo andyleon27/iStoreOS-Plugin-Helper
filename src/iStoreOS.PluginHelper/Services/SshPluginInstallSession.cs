@@ -8,46 +8,38 @@ using iStoreOS.PluginHelper.Models;
 
 namespace iStoreOS.PluginHelper.Services
 {
-    internal sealed class SshPluginInstallSession : IPluginInstallSession, IInstallerMonitoringSession
+    internal sealed class SshPluginInstallSession : IPluginInstallSession, IInstallerMonitoringSession, IInstallationUploadSession
     {
-        private readonly SshClient ssh;
+        private readonly Func<SshClient> active;
         private readonly Func<SftpClient> createTransfer;
+        private readonly Func<ScpClient> createScp;
         private readonly Func<string, string> redact;
-        private PersistentInstallerMonitor monitor;
+        private IDisposable monitor;
+        private Func<long, long, InstallerPoll> poll;
         private string monitorDirectory;
         public SshPluginInstallSession(SshClient ssh, Func<SftpClient> createTransfer, Func<string, string> redact)
-        { this.ssh = ssh; this.createTransfer = createTransfer; this.redact = redact; }
+            : this(ssh, createTransfer, null, redact) { }
+        public SshPluginInstallSession(SshClient ssh, Func<SftpClient> createTransfer, Func<ScpClient> createScp, Func<string, string> redact)
+            : this(() => ssh, createTransfer, createScp, redact) { }
+        public SshPluginInstallSession(Func<SshClient> active, Func<SftpClient> createTransfer, Func<ScpClient> createScp, Func<string, string> redact)
+        { this.active = active; this.createTransfer = createTransfer; this.createScp = createScp; this.redact = redact; }
         public string Sanitize(string text) { return redact(text ?? ""); }
         public long TmpAvailable() { return PluginPackageInspection.ParseTmpAvailable(Require(Execute(PluginInstallCommands.TmpSpace, 10)).Output); }
         public void CreateDirectory(RemoteTempSession s) { Require(Execute(s.CreateCommand(), 10)); }
         public void Upload(Stream source, RemoteTempSession s, Action<long> progress, CancellationToken token)
+        { Upload(source, s, progress, null, token); }
+        public void Upload(Stream source, RemoteTempSession s, Action<long> progress, Action<string> log, CancellationToken token)
         {
-            token.ThrowIfCancellationRequested();
-            var transfer = createTransfer();
-            using (var settings = transfer.ConnectionInfo as IDisposable)
-            using (transfer)
-            {
-                transfer.OperationTimeout = TimeSpan.FromSeconds(60);
-                // Only SFTP in V0.3. Authentication/host-key/network failures never trigger a weaker fallback.
-                try { transfer.Connect(); }
-                catch (SshException ex)
-                { throw new IOException("SFTP 连接 / subsystem 不可用；未启用 SCP fallback。" + Sanitize(ex.Message), ex); }
-                token.ThrowIfCancellationRequested();
-                source.Position = 0;
-                // UploadFile's legacy callback runs on the ThreadPool. Use the cancellable
-                // task API and an inline IProgress instead of throwing from that callback.
-                transfer.UploadFileAsync(source, s.RunPath, false, new InlineUploadProgress(progress), token).GetAwaiter().GetResult();
-                token.ThrowIfCancellationRequested();
-            }
-        }
-        private sealed class InlineUploadProgress : IProgress<UploadFileProgressReport>
-        {
-            private readonly Action<long> report;
-            public InlineUploadProgress(Action<long> report) { this.report = report; }
-            public void Report(UploadFileProgressReport value) { if (report != null) report(checked((long)value.TotalBytesUploaded)); }
+            new InstallationPackageUploader(() => new SftpInstallationUploadClient(createTransfer()),
+                () => { if (createScp == null) throw new InvalidOperationException("受信任 SCP 工厂不可用。"); return new ScpInstallationUploadClient(createScp()); },
+                () => active() != null && active().IsConnected, Sanitize,
+                () => Require(Execute(PluginInstallCommands.ScpTargetCheck(s), 10), "SCP 目标独占检查")).Upload(source, s, progress, log, token);
         }
         public long RemoteFileSize(RemoteTempSession s)
         {
+            var exists = Execute(PluginInstallCommands.UploadedFileCheck(s), 10);
+            if (exists.ExitStatus == 44) throw new FileNotFoundException("远端本轮安装包不存在。", s.RunPath);
+            Require(exists, "上传文件存在性 / 路径检查");
             long size;
             if (!long.TryParse(Require(Execute(PluginInstallCommands.FileSize(s), 10)).Output.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out size))
                 throw new InvalidDataException("远程文件大小不可读。");
@@ -69,22 +61,33 @@ namespace iStoreOS.PluginHelper.Services
             if (monitor != null)
             {
                 if (s.Directory != monitorDirectory) throw new InvalidOperationException("监测 session 不匹配。");
-                return monitor.Poll(stdoutOffset, stderrOffset);
+                return poll(stdoutOffset, stderrOffset);
             }
-            using (OpenInstallerMonitor(s)) return monitor.Poll(stdoutOffset, stderrOffset);
+            using (OpenInstallerMonitor(s)) return poll(stdoutOffset, stderrOffset);
         }
         public IDisposable OpenInstallerMonitor(RemoteTempSession s)
         {
             if (monitor != null) throw new InvalidOperationException("已有安装监测 scope。");
-            monitor = new PersistentInstallerMonitor(() => new TrustedFileSession(createTransfer()), s); monitorDirectory = s.Directory;
-            return InstallerMonitoring.ReleaseOnDispose(monitor, () => { monitor = null; monitorDirectory = null; });
+            if (s.SftpUnavailable)
+            {
+                var reader = new SshInstallerMonitor(s, text => SshInstallerMonitor.Execute(active, text));
+                monitor = reader; poll = reader.Poll;
+            }
+            else
+            {
+                var reader = new PersistentInstallerMonitor(() => new TrustedFileSession(createTransfer()), s);
+                monitor = reader; poll = reader.Poll;
+            }
+            monitorDirectory = s.Directory;
+            return InstallerMonitoring.ReleaseOnDispose(monitor, () => { monitor = null; monitorDirectory = null; poll = null; },
+                s.SftpUnavailable ? "安装监测：SSH fallback（设备无 SFTP subsystem）" : "安装监测：SFTP", !s.SftpUnavailable);
         }
         private sealed class TrustedFileSession : IConnectedInstallerFileSession
         {
             private readonly SftpClient client;
             private readonly IDisposable settings;
             public TrustedFileSession(SftpClient client) { this.client = client; settings = client.ConnectionInfo as IDisposable; }
-            public void Connect() { client.OperationTimeout = TimeSpan.FromSeconds(15); client.Connect(); }
+            public void Connect() { client.OperationTimeout = TimeSpan.FromSeconds(15); SshConnectionFactory.Connect(client); }
             public bool IsConnected { get { return client.IsConnected; } }
             public bool Exists(string path) { return client.Exists(path); }
             public Stream OpenRead(string path)
@@ -100,12 +103,14 @@ namespace iStoreOS.PluginHelper.Services
         }
         private ProbeResult Execute(string text, int seconds)
         {
-            using (var command = ssh.CreateCommand(text))
+            try {
+            using (var command = active().CreateCommand(text))
             {
                 command.CommandTimeout = TimeSpan.FromSeconds(seconds);
                 string output = command.Execute(); object status = command.ExitStatus;
                 return new ProbeResult { ExitStatus = status == null ? -1 : Convert.ToInt32(status), Output = output, Error = command.Error };
             }
+            } catch (Exception error) { SshConnectionFactory.Failure(active(), error); throw; }
         }
     }
 }

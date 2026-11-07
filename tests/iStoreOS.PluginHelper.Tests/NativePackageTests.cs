@@ -165,7 +165,7 @@ namespace iStoreOS.PluginHelper.Tests
         private static PluginPackageInfo Plugin(LocalPackageFormat format) { return new PluginPackageInfo { Format = format, MetadataRead = true, PluginName = Name, PluginVersion = Version, Architecture = "x86_64" }; }
         private static RouterEnvironment Router(PackageManagerKind manager) { return new RouterEnvironment { IsConnected = true, Architecture = "x86_64", Version = "25.12.5", SdkSeries = "25.12", HostKeyFingerprint = "SHA256:fixture", PackageManager = manager }; }
         private static string Control() { return "Package: " + Name + "\nVersion: " + Version + "\nArchitecture: x86_64\nInstalled-Size: 4096\nDescription: fixture\n"; }
-        private static void Fixture(string kind, Action<string> action) { BytesFixture(kind == "ipk" || kind == "ar" ? ".ipk" : ".apk", kind == "ipk" ? Ipk(Control()) : kind == "ar" ? Ar() : kind == "v2" || kind == "signed-v2" ? ApkV2(kind == "signed-v2") : Adb(kind), action); }
+        internal static void Fixture(string kind, Action<string> action) { BytesFixture(kind == "ipk" || kind == "ar" ? ".ipk" : ".apk", kind == "ipk" ? Ipk(Control()) : kind == "ar" ? Ar() : kind == "v2" || kind == "signed-v2" ? ApkV2(kind == "signed-v2") : Adb(kind), action); }
         private static void BytesFixture(string extension, byte[] bytes, Action<string> action)
         { string file = Path.Combine(Path.GetTempPath(), "filename-is-not-metadata-" + Guid.NewGuid().ToString("N") + extension); try { File.WriteAllBytes(file, bytes); action(file); } finally { File.Delete(file); } }
         private static byte[] Ipk(string control, bool duplicate = false)

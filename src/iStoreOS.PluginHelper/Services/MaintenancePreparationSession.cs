@@ -37,9 +37,11 @@ namespace iStoreOS.PluginHelper.Services
             using (client)
             {
                 client.OperationTimeout = TimeSpan.FromSeconds(20);
-                await client.ConnectAsync(token).ConfigureAwait(false);
+                await SshConnectionFactory.ConnectAsync(client, token).ConfigureAwait(false);
+                try {
                 using (var input = new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.Read))
                     await client.UploadFileAsync(input, path, false, null, token).ConfigureAwait(false);
+                } catch (Exception error) { SshConnectionFactory.Failure(client, error); throw; }
             }
         }
         public async Task<string> ReadHashAsync(RemoteMaintenanceWorkspace workspace, string fileName, CancellationToken token)
@@ -50,12 +52,12 @@ namespace iStoreOS.PluginHelper.Services
         {
             token.ThrowIfCancellationRequested();
             if (!IsConnected) throw new IOException("SSH 已断开，无法完成脚本准备或清理。");
-            using (var command = ssh.CreateCommand(text))
+            try { using (var command = ssh.CreateCommand(text))
             {
                 command.CommandTimeout = TimeSpan.FromSeconds(15);
                 await command.ExecuteAsync(token).ConfigureAwait(false);
                 return new ProbeResult { ExitStatus = command.ExitStatus ?? -1, Output = command.Result, Error = Sanitize(command.Error) };
-            }
+            } } catch (Exception error) { SshConnectionFactory.Failure(ssh, error); throw; }
         }
         private static string Require(ProbeResult result)
         { if (result.ExitStatus != 0) throw new IOException("维护准备远端命令失败，exit " + result.ExitStatus + ": " + result.Error); return result.Output; }

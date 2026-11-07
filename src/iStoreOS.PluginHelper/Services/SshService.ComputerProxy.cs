@@ -67,6 +67,7 @@ namespace iStoreOS.PluginHelper.Services
             string host = primary.ConnectionInfo.Host; int port = primary.ConnectionInfo.Port;
             var endpoint = new ComputerProxyEndpoint { DeviceHost = host, DevicePort = port, LocalProxyPort = localProxyPort };
             var context = new ComputerProxyConnectionContext { Primary = primary, Endpoint = endpoint, Account = primary.ConnectionInfo.Username, Authentication = connectionFactory,
+                Log = text => connectionDiagnostics(sanitizeLog(text)),
                 IsCurrent = () => { lock (sync) return !disposed && ReferenceEquals(client, primary); }, TrustHostKey = key => IsComputerProxyHostKeyTrusted(host, port, fingerprint, key) };
             var session = computerProxyFactory(context); ComputerProxyTunnelService tunnel = null;
             try { tunnel = new ComputerProxyTunnelService(session, endpoint, progress, result => ReleaseComputerProxy(tunnel, result)); }

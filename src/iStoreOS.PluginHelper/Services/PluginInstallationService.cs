@@ -61,7 +61,7 @@ namespace iStoreOS.PluginHelper.Services
                     result.Status = InstallStatus.FailedUpload;
                     report("2/7 上传插件", "远程临时目录：" + remote.Directory + "；SFTP 上传开始。");
                     long lastReported = -1, totalBytes = source.Length; var uploadSync = new object();
-                    session.Upload(source, remote, uploaded =>
+                    Action<long> uploadProgress = uploaded =>
                     {
                         lock (uploadSync)
                         {
@@ -70,15 +70,17 @@ namespace iStoreOS.PluginHelper.Services
                             lastReported = percent;
                             if (progress != null) progress.Report(new InstallProgress { Step = "2/7 上传插件", UploadedBytes = uploaded, TotalBytes = totalBytes });
                         }
-                    }, token);
+                    };
+                    var uploadSession = session as IInstallationUploadSession;
+                    if (uploadSession == null) session.Upload(source, remote, uploadProgress, token);
+                    else uploadSession.Upload(source, remote, uploadProgress, text => report("2/7 上传插件", text), token);
                     token.ThrowIfCancellationRequested();
                     result.Status = InstallStatus.FailedIntegrity;
                     report("3/7 SHA256", "上传完成，正在核对远程大小和 SHA256。");
                     if (session.RemoteFileSize(remote) != source.Length) throw new InvalidDataException("上传文件大小不一致，禁止安装。");
                     if (PluginPackageInspection.ComputeSha256(source) != result.Sha256) throw new InvalidDataException("本地文件在上传期间变化，禁止安装。");
                     ProbeResult hash = session.RemoteHash(remote);
-                    if (hash.ExitStatus == 127 && native) throw new InvalidDataException("原生包安装必须通过远程 SHA256；路由器没有 sha256sum，禁止安装。");
-                    if (hash.ExitStatus == 127) warning("路由器没有 sha256sum；使用文件大小和 Makeself --check 校验，不安装额外工具。");
+                    if (hash.ExitStatus == 127) throw new InvalidDataException("安装包必须通过远程 SHA256；路由器没有 sha256sum，禁止安装。");
                     else if (hash.ExitStatus != 0 || PluginPackageInspection.ParseSha256(hash.Output) != result.Sha256)
                         throw new InvalidDataException("远程 SHA256 不匹配或读取失败，禁止安装。");
                     else report("3/7 SHA256", "✓ 上传文件 SHA256 校验通过。");
@@ -114,7 +116,7 @@ namespace iStoreOS.PluginHelper.Services
                     }
                     result.Status = InstallStatus.FailedPrecheck;
                     token.ThrowIfCancellationRequested();
-                    report("4/7 安装准备", "检查 shell 内建 HUP trap；日志和结束状态通过受信任 SFTP 直接读取。");
+                    report("4/7 安装准备", "检查 shell 内建 HUP trap；日志和结束状态通过受信任连接读取。");
                     session.CheckRunner();
                     report("4/7 安装准备", "✓ 后台启动能力检查通过；读取 " + router.PackageManager + " 软件包快照。");
                     uploadTiming.Dispose(); uploadTiming = null;
@@ -212,6 +214,8 @@ namespace iStoreOS.PluginHelper.Services
             var outPending = new StringBuilder(); var errPending = new StringBuilder();
             using (var monitoring = InstallerMonitoring.Open(session, remote))
             {
+            var monitorInfo = monitoring as IInstallerMonitorInfo;
+            if (monitorInfo != null && !string.IsNullOrEmpty(monitorInfo.Description)) report("5/7 正在安装", monitorInfo.Description);
             try
             {
             while (true)
@@ -237,7 +241,7 @@ namespace iStoreOS.PluginHelper.Services
                 Emit(report, "stdout", outDecoder, outPending, new byte[0], true);
                 Emit(report, "stderr", errDecoder, errPending, new byte[0], true);
                 var statistics = monitoring as IInstallerMonitorStatistics;
-                if (statistics != null) report("5/7 正在安装", "Installer monitoring SFTP connection count = " + statistics.ConnectionCount);
+                if (statistics != null && (monitorInfo == null || monitorInfo.UsesSftp)) report("5/7 正在安装", "Installer monitoring SFTP connection count = " + statistics.ConnectionCount);
             }
             }
         }

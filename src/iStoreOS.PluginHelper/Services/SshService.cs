@@ -20,6 +20,7 @@ namespace iStoreOS.PluginHelper.Services
         private bool connecting;
         private bool softwareBusy;
         private Func<string, string> sanitizeLog = text => text ?? "";
+        private Action<string> connectionDiagnostics = text => { };
         private Func<PasswordConnectionInfo> connectionFactory;
         private readonly InstallationWorkflowService installWorkflow = new InstallationWorkflowService();
         public bool CanReconnect { get { lock (sync) return !disposed && connectionFactory != null; } }
@@ -41,6 +42,7 @@ namespace iStoreOS.PluginHelper.Services
                 active = client; pending = pendingClient;
                 client = null; pendingClient = null;
                 connectionFactory = null; sanitizeLog = text => text ?? "";
+                connectionDiagnostics = text => { };
                 ResetMaintenanceNetworkLocked();
             }
             return Task.Run(() => {
@@ -68,7 +70,7 @@ namespace iStoreOS.PluginHelper.Services
                 try
                 {
                     var session = new SshInstallationWorkflowSession(() => client, ReconnectForInstallation,
-                        () => CreateTrustedTransfer(expected.HostKeyFingerprint), text => sanitizeLog(text));
+                        () => CreateTrustedInstallationTransfer(expected.HostKeyFingerprint), () => CreateTrustedScp(expected.HostKeyFingerprint), text => sanitizeLog(text));
                     return await installWorkflow.RunAsync(session, expected, filePath, progress, token);
                 }
                 finally { lock (sync) softwareBusy = false; }
@@ -76,13 +78,11 @@ namespace iStoreOS.PluginHelper.Services
         }
         private SftpClient CreateTrustedTransfer(string fingerprint)
         {
-            var transfer = new SftpClient(connectionFactory()) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
-            transfer.HostKeyReceived += (sender, args) =>
-            {
-                string actual;
-                using (SHA256 hash = SHA256.Create()) actual = "SHA256:" + Convert.ToBase64String(hash.ComputeHash(args.HostKey)).TrimEnd('=');
-                args.CanTrust = actual == fingerprint && trustStore.IsTrusted(transfer.ConnectionInfo.Host, transfer.ConnectionInfo.Port, actual);
-            };
+            var transfer = SshConnectionFactory.Sftp(connectionFactory(), false, text => connectionDiagnostics(sanitizeLog(text)));
+            SshConnectionFactory.Trust(transfer, key => {
+                string actual = SshConnectionFactory.Fingerprint(key);
+                return actual == fingerprint && trustStore.IsTrusted(transfer.ConnectionInfo.Host, transfer.ConnectionInfo.Port, actual);
+            });
             return transfer;
         }
         private RouterEnvironment ReconnectForInstallation(RouterEnvironment expected, bool force, Action<string> log, CancellationToken token)
@@ -92,7 +92,7 @@ namespace iStoreOS.PluginHelper.Services
             {
                 Func<PasswordConnectionInfo> settings;
                 lock (sync) { if (disposed || connectionFactory == null) throw new InvalidOperationException("当前会话认证信息不可用。"); settings = connectionFactory; }
-                var replacement = new SshClient(settings()) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
+                var replacement = SshConnectionFactory.Ssh(settings(), "安装重连", log);
                 bool keyRejected = false;
                 replacement.HostKeyReceived += (sender, args) =>
                 {
@@ -105,7 +105,7 @@ namespace iStoreOS.PluginHelper.Services
                 try
                 {
                     lock (sync) { if (disposed) throw new OperationCanceledException(); pendingClient = replacement; }
-                    replacement.Connect(); token.ThrowIfCancellationRequested();
+                    SshConnectionFactory.Connect(replacement); token.ThrowIfCancellationRequested();
                     SshClient previous;
                     lock (sync) { if (disposed) throw new OperationCanceledException(); previous = client; client = replacement; pendingClient = null; ResetMaintenanceNetworkLocked(); }
                     if (previous != null) previous.Dispose();
@@ -153,12 +153,11 @@ namespace iStoreOS.PluginHelper.Services
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 SshClient previous;
-                lock (sync) { previous = client; client = null; connectionFactory = null; sanitizeLog = text => text ?? ""; ResetMaintenanceNetworkLocked(); }
+                lock (sync) { previous = client; client = null; connectionFactory = null; sanitizeLog = text => text ?? ""; connectionDiagnostics = text => { }; ResetMaintenanceNetworkLocked(); }
                 if (previous != null) previous.Dispose();
                 log("开始连接：" + host + ":22（密码认证；仅执行只读检测）。");
-                var connection = new PasswordConnectionInfo(host, 22, username, password)
-                { Timeout = TimeSpan.FromSeconds(8) };
-                current = new SshClient(connection) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
+                var connection = SshConnectionFactory.Password(host, 22, username, password);
+                current = SshConnectionFactory.Ssh(connection, "首页 SSH", log);
                 current.HostKeyReceived += (sender, args) =>
                 {
                     using (SHA256 hash = SHA256.Create())
@@ -175,7 +174,7 @@ namespace iStoreOS.PluginHelper.Services
                     if (disposed) throw new OperationCanceledException();
                     pendingClient = current;
                 }
-                current.Connect();
+                SshConnectionFactory.Connect(current);
                 sshConnected = true;
                 cancellationToken.ThrowIfCancellationRequested();
                 log("SSH 连接成功。");
@@ -191,7 +190,8 @@ namespace iStoreOS.PluginHelper.Services
                     client = current;
                     ResetMaintenanceNetworkLocked();
                     sanitizeLog = text => LogHelper.RedactPreservingLines(text, password);
-                    connectionFactory = () => new PasswordConnectionInfo(host, 22, username, password) { Timeout = TimeSpan.FromSeconds(8) };
+                    connectionDiagnostics = log;
+                    connectionFactory = () => SshConnectionFactory.Password(host, 22, username, password);
                     pendingClient = null;
                     current = null; // The service owns the live session until reconnect/close.
                 }
@@ -203,7 +203,8 @@ namespace iStoreOS.PluginHelper.Services
                 ConnectionError error = cancellationToken.IsCancellationRequested || disposed ? ConnectionError.Cancelled :
                     (hostKeyChanged ? ConnectionError.HostKeyChanged : ClassifyError(exception));
                 if (sshConnected && error == ConnectionError.Other) error = ConnectionError.EnvironmentDetectionFailed;
-                log("连接检测失败：" + error + "；" + LogHelper.ExceptionDetails(exception, password));
+                SshConnectionFactory.Failure(current, exception);
+                log("连接检测失败：" + SshErrorClassifier.Name(error) + "；" + LogHelper.ExceptionDetails(exception, password));
                 return new ConnectionResult { Error = error, UserMessage = GetUserMessage(error) };
             }
             finally
@@ -214,18 +215,7 @@ namespace iStoreOS.PluginHelper.Services
         }
 
         public static ConnectionError ClassifyError(Exception exception)
-        {
-            for (Exception item = exception; item != null; item = item.InnerException)
-            {
-                if (item is SshAuthenticationException) return ConnectionError.AuthenticationFailure;
-                if (item is SshOperationTimeoutException || item is TimeoutException) return ConnectionError.Timeout;
-                var socket = item as SocketException;
-                if (socket != null)
-                    return socket.SocketErrorCode == SocketError.TimedOut ? ConnectionError.Timeout : ConnectionError.NetworkUnreachable;
-                if (item is OperationCanceledException) return ConnectionError.Cancelled;
-            }
-            return exception is SshException ? ConnectionError.SshProtocolError : ConnectionError.Other;
-        }
+        { return SshErrorClassifier.Classify(exception); }
 
         public Task<SoftwareEnvironmentResult> CheckSoftwareEnvironmentAsync(RouterEnvironment environment,
             IProgress<SoftwareProgress> progress, Func<SoftwareRepairPlan, Task<bool>> confirmRepair, CancellationToken cancellationToken)
@@ -255,13 +245,13 @@ namespace iStoreOS.PluginHelper.Services
             IProgress<InstallProgress> progress, IProgress<SoftwareProgress> softwareProgress,
             Func<SoftwareRepairPlan, Task<bool>> confirmRepair, Func<InstallConfirmation, Task<bool>> confirmInstall, CancellationToken token)
         {
-            SshClient active; Func<string, string> redact; Func<PasswordConnectionInfo> settings;
+            SshClient active; Func<string, string> redact;
             lock (sync)
             {
                 if (disposed) throw new ObjectDisposedException("SshService");
                 if (connecting || softwareBusy) throw new InvalidOperationException("已有连接、检测或安装操作正在进行。");
                 if (client == null || !client.IsConnected || connectionFactory == null) throw new InvalidOperationException("请先连接路由器。");
-                active = client; redact = sanitizeLog; settings = connectionFactory; softwareBusy = true;
+                active = client; redact = sanitizeLog; softwareBusy = true;
             }
             return Task.Run(async () =>
             {
@@ -271,19 +261,8 @@ namespace iStoreOS.PluginHelper.Services
                     RouterEnvironment current = new RouterDetectionService().Detect(new SshReadOnlySession(active, token),
                         text => { if (progress != null) progress.Report(new InstallProgress { Step = "安装前环境复核", Log = redact(text) }); }, token);
                     current.HostKeyFingerprint = environment.HostKeyFingerprint;
-                    Func<SftpClient> transfer = () =>
-                    {
-                        var sftp = new SftpClient(settings()) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
-                        sftp.HostKeyReceived += (sender, args) =>
-                        {
-                            string fingerprint;
-                            using (SHA256 hash = SHA256.Create()) fingerprint = "SHA256:" + Convert.ToBase64String(hash.ComputeHash(args.HostKey)).TrimEnd('=');
-                            args.CanTrust = fingerprint == current.HostKeyFingerprint && trustStore.IsTrusted(sftp.ConnectionInfo.Host, sftp.ConnectionInfo.Port, fingerprint);
-                            if (progress != null) progress.Report(new InstallProgress { Step = "2/7 上传插件", Log = "SFTP Host Key：" + fingerprint + (args.CanTrust ? "；与已连接 SSH 一致。" : "；拒绝不一致的指纹。") });
-                        };
-                        return sftp;
-                    };
-                    return await new PluginInstallationService().RunAsync(new SshPluginInstallSession(active, transfer, redact), current, filePath,
+                    return await new PluginInstallationService().RunAsync(new SshPluginInstallSession(active,
+                        () => CreateTrustedInstallationTransfer(current.HostKeyFingerprint), () => CreateTrustedScp(current.HostKeyFingerprint), redact), current, filePath,
                         () => new SoftwareEnvironmentService().RunAsync(new SshSoftwareSourceSession(active, redact), current, softwareProgress, confirmRepair, token),
                         confirmInstall, progress, token);
                 }
@@ -299,6 +278,10 @@ namespace iStoreOS.PluginHelper.Services
                 case ConnectionError.NetworkUnreachable: return "无法连接到路由器，请检查地址和网络";
                 case ConnectionError.Timeout: return "连接或检测超时，请检查路由器是否可达";
                 case ConnectionError.SshProtocolError: return "SSH 协议错误，请查看详细日志";
+                case ConnectionError.MacError: return "SSH 数据完整性校验失败，请查看详细日志";
+                case ConnectionError.KeyExchangeFailed: return "SSH 密钥交换失败，请查看详细日志";
+                case ConnectionError.AlgorithmNegotiationFailed: return "SSH 算法协商失败，请查看详细日志";
+                case ConnectionError.ConnectionAborted: return "SSH 连接中断，请检查网络后重试";
                 case ConnectionError.HostKeyChanged: return "服务器 SSH 密钥已变化，已拒绝连接；请核对设备";
                 case ConnectionError.EnvironmentDetectionFailed: return "SSH 已连接，但环境检测失败，请查看日志";
                 case ConnectionError.Cancelled: return "连接检测已取消";
@@ -325,6 +308,7 @@ namespace iStoreOS.PluginHelper.Services
                 pendingClient = null;
                 sanitizeLog = text => text ?? "";
                 connectionFactory = null;
+                connectionDiagnostics = text => { };
                 ResetMaintenanceNetworkLocked();
             }
             if (menu != null) { try { menu.Cancel(); } catch (ObjectDisposedException) { } catch (AggregateException) { } }

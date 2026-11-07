@@ -381,8 +381,10 @@ namespace iStoreOS.PluginHelper.Services
             var outDecoder = Encoding.UTF8.GetDecoder(); var errDecoder = Encoding.UTF8.GetDecoder();
             var installer = c.Session.Installer;
             using (c.Timing.Measure("InstallerRuntime"))
-            using (InstallerMonitoring.Open(installer, c.Active))
+            using (var monitoring = InstallerMonitoring.Open(installer, c.Active))
             {
+            var monitorInfo = monitoring as IInstallerMonitorInfo;
+            if (monitorInfo != null && !string.IsNullOrEmpty(monitorInfo.Description)) c.Report(InstallationState.ReconnectChecking, monitorInfo.Description);
             while (watch.Elapsed <= Engine.OverallLimit)
             {
                 var poll = Read(c, () => installer.PollInstaller(c.Active, stdout, stderr));
@@ -463,7 +465,7 @@ namespace iStoreOS.PluginHelper.Services
             }
         }
 
-        private sealed class WorkflowInstaller : IPluginInstallSession, IInstallerMonitoringSession, IInstallationTimingSession
+        private sealed class WorkflowInstaller : IPluginInstallSession, IInstallerMonitoringSession, IInstallationTimingSession, IInstallationUploadSession
         {
             private readonly InstallationWorkflowService owner; private readonly Context c; private readonly bool retry;
             private string uploadedHash; private long uploadedBytes;
@@ -484,7 +486,15 @@ namespace iStoreOS.PluginHelper.Services
             public long TmpAvailable() { return owner.Read(c, () => c.Session.Installer.TmpAvailable()); }
             public void CreateDirectory(RemoteTempSession s) { c.Session.Installer.CreateDirectory(s); c.Directories.Add(s); c.Active = s; c.Finished = true; }
             public void Upload(Stream source, RemoteTempSession s, Action<long> progress, CancellationToken token)
-            { uploadedHash = PluginPackageInspection.ComputeSha256(source); uploadedBytes = source.Length; if (uploadedHash != c.Hash) throw new InvalidDataException("本地 SHA256 不匹配，禁止继续。"); c.Session.Installer.Upload(source, s, progress, token); }
+            { Upload(source, s, progress, null, token); }
+            public void Upload(Stream source, RemoteTempSession s, Action<long> progress, Action<string> log, CancellationToken token)
+            {
+                uploadedHash = PluginPackageInspection.ComputeSha256(source); uploadedBytes = source.Length; if (uploadedHash != c.Hash) throw new InvalidDataException("本地 SHA256 不匹配，禁止继续。");
+                var installer = c.Session.Installer;
+                var upload = installer as IInstallationUploadSession;
+                if (upload == null) installer.Upload(source, s, progress, token);
+                else upload.Upload(source, s, progress, log, token);
+            }
             public long RemoteFileSize(RemoteTempSession s) { return owner.Read(c, () => c.Session.Installer.RemoteFileSize(s)); }
             public ProbeResult RemoteHash(RemoteTempSession s)
             {
@@ -509,12 +519,13 @@ namespace iStoreOS.PluginHelper.Services
                     if (size < 0)
                     {
                         c.Report(InstallationState.Uploading, "远端安装包已丢失，重新上传同一锁定的本地文件。");
-                        using (var file = new FileStream(c.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read)) c.Session.Installer.Upload(file, s, bytes => { }, c.PreparationToken);
+                        using (var file = new FileStream(c.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                            Upload(file, s, bytes => { }, text => c.Report(InstallationState.Uploading, text), c.PreparationToken);
                         size = c.Session.Installer.RemoteFileSize(s);
                         if (s.Format == LocalPackageFormat.Run && !PluginPackageInspection.IntegrityPassed(c.Session.Installer.Inspect(s, true))) throw new InstallationPolicyException(InstallationFailureKind.Makeself, "重新上传的 Makeself --check 未通过。");
                     }
                     var hash = c.Session.Installer.RemoteHash(s);
-                    if (size != uploadedBytes || (hash.ExitStatus != 127 && (hash.ExitStatus != 0 || PluginPackageInspection.ParseSha256(hash.Output) != uploadedHash)) || ((retry || s.Format != LocalPackageFormat.Run) && hash.ExitStatus == 127))
+                    if (size != uploadedBytes || hash.ExitStatus != 0 || PluginPackageInspection.ParseSha256(hash.Output) != uploadedHash)
                         throw new InstallationPolicyException(InstallationFailureKind.Integrity, "启动前大小 / SHA256 再校验失败。");
                     if (s.Format != LocalPackageFormat.Run) owner.CheckReadiness(c, c.Original.OfficialFeeds.Concat(c.Original.AdditionalFeeds).ToList(), uploadedBytes).GetAwaiter().GetResult();
                     owner.WaitForManager(c).GetAwaiter().GetResult();
